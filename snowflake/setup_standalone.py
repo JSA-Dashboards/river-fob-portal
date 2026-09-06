@@ -33,6 +33,9 @@ DDL = {
     "calendar_history": "as_of VARCHAR, commodity VARCHAR, seq NUMBER, month VARCHAR, contract VARCHAR",
     "futures_history": "as_of VARCHAR, commodity VARCHAR, month VARCHAR, value FLOAT",
     "spreads_history": "as_of VARCHAR, commodity VARCHAR, seq NUMBER, label VARCHAR, value FLOAT",
+    # Fastmarkets FOB Vessel tab. Added 2026-09-06 -- this table postdates the
+    # original script and was silently absent from the migration.
+    "fob_vessel_history": "as_of VARCHAR, symbol VARCHAR, value FLOAT",
 }
 COLS = {
     "cif_history": ["as_of", "commodity", "month", "value"],
@@ -40,6 +43,7 @@ COLS = {
     "calendar_history": ["as_of", "commodity", "seq", "month", "contract"],
     "futures_history": ["as_of", "commodity", "month", "value"],
     "spreads_history": ["as_of", "commodity", "seq", "label", "value"],
+    "fob_vessel_history": ["as_of", "symbol", "value"],
 }
 CHUNK = 1500
 
