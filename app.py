@@ -574,20 +574,51 @@ def _by_month(seed_list):
     return dict(zip(S.SEED_MONTHS, seed_list))
 
 
+def _latest_inputs():
+    """(cif, freight, futures) from the most recent archived date, for seeding the
+    working grid with recent REAL data instead of the stale static June seeds
+    (whose values misalign as the window rolls — the cause of accidental
+    stale/truncated saves). Returns (None, None, None) if the archive is empty
+    or unreachable, so the static seed is used as a last resort."""
+    try:
+        dates = db.list_dates()
+        if not dates:
+            return None, None, None
+        d = str(dates[0])[:10]
+        cif, frt, _cal = db.load_snapshot(d)
+        fut, _spr = db.load_extras(d)
+        return (cif or None), (frt or None), (fut or None)
+    except Exception:
+        return None, None, None
+
+
 def _init_state():
-    """Create the editable input tables if absent, indexed by the current
-    rolling window (M.MONTHS). Seeds are matched by month name so a rolled
-    window keeps overlapping months and blanks the newly-added ones."""
+    """Create the editable input tables if absent, indexed by the current rolling
+    window (M.MONTHS). The grid is seeded from the most recent archived snapshot
+    (current, full-window data); only if the archive is empty do we fall back to
+    the static month-name-matched seeds."""
     months = M.MONTHS
+    _need = ("freight" not in st.session_state) or any(
+        f"cif_{c}" not in st.session_state for c in M.COMMODITIES)
+    l_cif, l_frt, l_fut = _latest_inputs() if _need else (None, None, None)
+
     if "freight" not in st.session_state:
-        st.session_state.freight = pd.DataFrame(
-            {m: [_by_month(S.SEED_FREIGHT[r]).get(m) for r in M.FREIGHT_REGIONS]
-                 for m in months},
-            index=M.FREIGHT_REGIONS,
-        )
+        if l_frt:
+            st.session_state.freight = pd.DataFrame(
+                {m: [(l_frt.get(r) or {}).get(m) for r in M.FREIGHT_REGIONS]
+                     for m in months},
+                index=M.FREIGHT_REGIONS,
+            )
+        else:
+            st.session_state.freight = pd.DataFrame(
+                {m: [_by_month(S.SEED_FREIGHT[r]).get(m) for r in M.FREIGHT_REGIONS]
+                     for m in months},
+                index=M.FREIGHT_REGIONS,
+            )
     for c in M.COMMODITIES:
         if f"cif_{c}" not in st.session_state:
-            cifm, futm = _by_month(S.SEED_CIF[c]), _by_month(S.SEED_FUTURES[c])
+            cifm = (l_cif or {}).get(c) or _by_month(S.SEED_CIF[c])
+            futm = (l_fut or {}).get(c) or _by_month(S.SEED_FUTURES[c])
             st.session_state[f"cif_{c}"] = pd.DataFrame(
                 {"CIF": [cifm.get(m) for m in months],
                  "Futures": [futm.get(m) for m in months]},
@@ -3329,6 +3360,42 @@ def _close(a, b):
     return abs(a - b) < 1e-9
 
 
+# Plausible CIF basis band per commodity — a flat price, a decimal slip, or the
+# stale seed junk lands outside it. Mirrors the daily import's guard.
+_CIF_BAND = {"Corn": (-1.0, 3.0), "Soybeans": (-1.5, 4.0), "Wheat": (-2.5, 4.0)}
+
+
+def _save_guard(cif, frt):
+    """Reasons the working grid looks un-entered — the stale/default-seed mistake
+    that archived truncated data on 9/8 & 9/10. Empty list = it looks like a real,
+    finished sheet. The Save button is blocked while any reason stands (with an
+    explicit override)."""
+    probs = []
+    months = M.MONTHS
+    # 1) Corn is quoted across the whole window; the seed-misalign bug leaves the
+    #    far months blank, so a gap in corn CIF is the clearest "not entered" tell.
+    corn = cif.get("Corn") or {}
+    gaps = [m for m in months if corn.get(m) is None]
+    if gaps:
+        probs.append("Corn CIF is blank for " + ", ".join(gaps)
+                     + " — a real sheet quotes corn across the whole window "
+                     "(this looks like un-pasted / default data).")
+    # 2) Plausible basis band.
+    for c, (lo, hi) in _CIF_BAND.items():
+        for m, v in (cif.get(c) or {}).items():
+            if v is not None and not (lo <= v <= hi):
+                probs.append(f"{c} CIF {m} = {v} is outside the plausible basis "
+                             f"band ({lo:g} to {hi:g}).")
+                break
+    # 3) Exact match to the built-in static seed → the untouched default grid.
+    seed_corn = {m: v for m, v in _by_month(S.SEED_CIF["Corn"]).items()
+                 if m in months}
+    if seed_corn and all(_close(corn.get(m), seed_corn.get(m)) for m in seed_corn):
+        probs.append("Corn CIF matches the built-in seed defaults exactly — this "
+                     "is the default grid, not today's sheet.")
+    return probs
+
+
 def saved_status(as_of):
     """('none'|'insync'|'dirty') comparing current inputs to the saved snapshot."""
     scif, sfrt, _ = db.load_snapshot(as_of.isoformat())
@@ -3628,10 +3695,18 @@ def render_inputs_tab(as_of):
                     help="Per-commodity; set wheat to its current VSR rate.")
 
     st.divider()
+    _cif_now, _frt_now, _ = _current_payloads()
+    _problems = _save_guard(_cif_now, _frt_now)
+    if _problems:
+        st.error("⚠️ This doesn't look like a finished sheet — review before "
+                 "saving:\n\n" + "\n".join(f"- {p}" for p in _problems))
+        _ok = st.checkbox("Save anyway — I've reviewed it")
+    else:
+        _ok = True
     s1, s2 = st.columns([1, 3])
     with s1:
         if st.button(f"💾 Save to archive", type="primary",
-                     use_container_width=True):
+                     use_container_width=True, disabled=not _ok):
             n_cif, n_frt = save_current(as_of)
             st.success(f"Saved **{as_of:%m/%d/%Y}** — {n_cif} CIF + {n_frt} "
                        "freight values.")
