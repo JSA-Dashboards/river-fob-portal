@@ -3365,7 +3365,36 @@ def _close(a, b):
 _CIF_BAND = {"Corn": (-1.0, 3.0), "Soybeans": (-1.5, 4.0), "Wheat": (-2.5, 4.0)}
 
 
-def _save_guard(cif, frt):
+def _grid_equal(a, b):
+    """True if two {outer_key: {month: value}} grids hold the same numbers, with a
+    missing key/month treated as None (so an all-blank region equals an absent
+    one). Used to detect a save that changed nothing from the prior day."""
+    a, b = a or {}, b or {}
+    for k in set(a) | set(b):
+        am, bm = (a.get(k) or {}), (b.get(k) or {})
+        for m in set(am) | set(bm):
+            if not _close(am.get(m), bm.get(m)):
+                return False
+    return True
+
+
+@st.cache_data(show_spinner=False)
+def _prior_snapshot(as_of_iso, _ver):
+    """(date, cif, freight) of the most recent archived day that isn't `as_of_iso`.
+    `_ver` (bumped on every Save) busts the cache when the archive changes, so this
+    hits the DB once per (date, save) rather than on every keystroke rerun."""
+    try:
+        dates = [str(d)[:10] for d in db.list_dates()]
+    except Exception:
+        return None, None, None
+    prior = next((d for d in dates if d != as_of_iso), None)
+    if not prior:
+        return None, None, None
+    cif, frt, _ = db.load_snapshot(prior)
+    return prior, cif, frt
+
+
+def _save_guard(cif, frt, as_of):
     """Reasons the working grid looks un-entered — the stale/default-seed mistake
     that archived truncated data on 9/8 & 9/10. Empty list = it looks like a real,
     finished sheet. The Save button is blocked while any reason stands (with an
@@ -3393,6 +3422,13 @@ def _save_guard(cif, frt):
     if seed_corn and all(_close(corn.get(m), seed_corn.get(m)) for m in seed_corn):
         probs.append("Corn CIF matches the built-in seed defaults exactly — this "
                      "is the default grid, not today's sheet.")
+    # 4) Identical to the most recent archived day → nothing new was entered for
+    #    this date (e.g. saving the seeded/prior grid unchanged).
+    pdate, p_cif, p_frt = _prior_snapshot(as_of.isoformat(),
+                                          st.session_state.get("_saved_ver", 0))
+    if pdate and _grid_equal(cif, p_cif) and _grid_equal(frt, p_frt):
+        probs.append(f"Every CIF and freight value is identical to {pdate} — "
+                     "nothing new has been entered for this date yet.")
     return probs
 
 
@@ -3696,7 +3732,7 @@ def render_inputs_tab(as_of):
 
     st.divider()
     _cif_now, _frt_now, _ = _current_payloads()
-    _problems = _save_guard(_cif_now, _frt_now)
+    _problems = _save_guard(_cif_now, _frt_now, as_of)
     if _problems:
         st.error("⚠️ This doesn't look like a finished sheet — review before "
                  "saving:\n\n" + "\n".join(f"- {p}" for p in _problems))
@@ -3708,6 +3744,9 @@ def render_inputs_tab(as_of):
         if st.button(f"💾 Save to archive", type="primary",
                      use_container_width=True, disabled=not _ok):
             n_cif, n_frt = save_current(as_of)
+            # Bump so the "identical to the prior day" check re-reads the archive
+            # (which now includes what we just saved) instead of a cached view.
+            st.session_state["_saved_ver"] = st.session_state.get("_saved_ver", 0) + 1
             st.success(f"Saved **{as_of:%m/%d/%Y}** — {n_cif} CIF + {n_frt} "
                        "freight values.")
             st.rerun()
