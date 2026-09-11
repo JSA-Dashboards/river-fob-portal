@@ -1259,10 +1259,12 @@ def _archived_carry(commodity, date_iso, loc, spreads):
 
 
 def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
-                       contracts=None, cur_label=None):
+                       contracts=None, cur_label=None, fut_row=None):
     """Top-of-carry (cash forward curve on spot futures) for a chosen location,
-    optionally overlaying the same curve from one or more archived dates.
-    `contracts` lets an archived date anchor to its own front contract."""
+    optionally overlaying the same curve from one or more archived dates, plus an
+    optional net-of-interest carry (gross carry less cumulative financing).
+    `contracts` lets an archived date anchor to its own front contract; `fut_row`
+    (CBOT by month) supplies the spot price for the interest leg."""
     months = months or M.MONTHS
     locs = [it[1] for it in M.BLOCK_LAYOUT if it[0] == "fob"]
     default = locs.index("STL") if "STL" in locs else 0
@@ -1279,6 +1281,12 @@ def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
                  "compare how it has shifted. Archived curves use the current "
                  "spread structure (spreads aren't stored per date).")
 
+    show_net = st.checkbox(
+        "Net-of-interest carry", value=True, key=f"carry_net_{commodity}",
+        help="Overlay the cash carry net of financing — gross carry minus "
+             "cumulative interest (spot futures × annual rate ÷ 12 per month), "
+             "anchored at the front month and again at October.")
+
     def _mdy(dd):
         return f"{dd.month}/{dd.day}/{dd.year % 100:02d}"
 
@@ -1290,6 +1298,27 @@ def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
     for m, v in zip(months, tc):
         if v is not None and not pd.isna(v):
             rows.append({"Month": m, "Carry": float(v), "Series": cur_label})
+
+    # Net-of-interest carry: gross carry less cumulative financing, from two
+    # anchors — the front month and October. Monthly interest = spot futures ×
+    # annual rate ÷ 12; net(month) = gross(month) − (months held) × interest.
+    net_series = []
+    ref_price = (fut_row or {}).get(months[0]) if fut_row else None
+    ipct = float(st.session_state.get("interest_pct", 0) or 0)
+    if show_net and ref_price and ipct:
+        mo_int = ref_price * (ipct / 100.0) / 12.0
+        anchors = [(0, f"Net of int (from {months[0]})")]
+        if "Oct" in months and months.index("Oct") != 0:
+            anchors.append((months.index("Oct"), "Net of int (from Oct)"))
+        for a, lbl in anchors:
+            net_series.append(lbl)
+            for i in range(a, len(months)):
+                g = tc[i]
+                if g is None or pd.isna(g):
+                    continue
+                rows.append({"Month": months[i], "Carry": float(g) - (i - a) * mo_int,
+                             "Series": lbl})
+
     for d in cmp_dates:
         tcd = _archived_carry(commodity, d, loc, spreads)
         if not tcd:
@@ -1303,7 +1332,8 @@ def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
         st.info("No carry data for this selection.")
         return
     df = pd.DataFrame(rows)
-    multi = len(cmp_dates) > 0
+    df["Kind"] = df["Series"].apply(lambda s: "Net" if s in net_series else "Gross")
+    multi = len(cmp_dates) > 0 or bool(net_series)
     title = f"Cash Fwd Curve {CHART_LABEL[commodity]} (Basis Spot Futures): {loc}"
 
     x = alt.X("Month:N", sort=months, title=None,
@@ -1330,8 +1360,14 @@ def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
                           scale=alt.Scale(scheme="tableau10"))
         size = alt.condition(f"datum.Series === '{cur_label}'",
                              alt.value(3.5), alt.value(2))
+        # Net-of-interest curves dashed so they read distinctly from the gross
+        # carry and any date overlays.
+        dash = alt.StrokeDash("Kind:N",
+                              scale=alt.Scale(domain=["Gross", "Net"],
+                                              range=[[1, 0], [6, 4]]),
+                              legend=None)
         base = alt.Chart(df).encode(
-            x=x, y=y, color=color, size=size,
+            x=x, y=y, color=color, size=size, strokeDash=dash,
             tooltip=[alt.Tooltip("Series:N"), alt.Tooltip("Month:N"),
                      alt.Tooltip("Carry:Q", format=".2f")])
         chart = base.mark_line(point=alt.OverlayMarkDef(size=35))
@@ -3867,7 +3903,8 @@ def _render_archived_commodity(commodity):
                   f"{commodity} FOB Sheet {view_date:%m-%d-%y}")
     st.markdown("##### 📈 Top of Carry")
     render_carry_chart(commodity, grid, spreads, as_of=view_date, months=months,
-                       contracts=contracts, cur_label=f"{view_date:%m/%d/%y}")
+                       contracts=contracts, cur_label=f"{view_date:%m/%d/%y}",
+                       fut_row=fut_row)
 
 
 if VIEW_ONLY:
@@ -3959,7 +3996,7 @@ else:
                           f"{commodity} FOB Sheet {as_of:%m-%d-%y}")
             st.markdown("##### 📈 Top of Carry")
             render_carry_chart(commodity, M.compute_fob_grid(commodity, cif_row, fbr),
-                               spreads, as_of=as_of)
+                               spreads, as_of=as_of, fut_row=fut_row)
 
 st.caption("Mirrors JSA FOB Sheet · FOB = CIF − (tariff factor × freight%) ÷ 2000 × bushel weight")
 
