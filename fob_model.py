@@ -233,7 +233,7 @@ CARRY_CONFIG = {
                       ("STL Henn Carry (Spot Futures)", "Hennepin")],
     },
     "Wheat": {
-        "cash_loc": "STL", "cash_mode": "cumulative",
+        "cash_loc": "STL", "cash_mode": "flat",
         "cash_label": "Cash vs Delivery (STL)",
         "spread_labels": ["WN/WU", "WU/WZ", "WZ/H"],
         "top_carry": [("STL Top Carry (Spot Futures)", "STL")],
@@ -354,25 +354,16 @@ def compute_full_carry(commodity, fut_row, interest_annual, storage_per_mo,
 
 
 def cash_vs_delivery(commodity, fob_row, cash_c, months=None):
-    """FOB(cash location) less the DVE cash distance, by month.
+    """FOB(cash location) less the DVE cash distance (a flat constant), by month —
+    the same idea for corn, soybeans and wheat.
 
-    Corn/soy subtract a flat constant; wheat is cumulative (each month
-    subtracts the prior month's result), matching the workbook exactly.
+    Wheat previously used a 'cumulative' mode that subtracted the prior month's
+    *result*, which oscillated (Sep -0.85, Oct +0.48, Nov -0.61 …) instead of
+    tracking the FOB curve; corrected to flat 2026-09 so it matches corn/soy.
     """
     months = months or MONTHS
-    mode = CARRY_CONFIG[commodity]["cash_mode"]
-    vals, prev = [], None
-    for m in months:
-        f = fob_row.get(m)
-        if f is None:
-            vals.append(None)
-            continue
-        base = cash_c if (mode == "cumulative" and prev is None) else (
-            prev if mode == "cumulative" else cash_c)
-        v = f - base
-        vals.append(v)
-        prev = v
-    return vals
+    return [None if fob_row.get(m) is None else fob_row.get(m) - cash_c
+            for m in months]
 
 
 def top_carry(commodity, fob_row, spreads, contracts=None, months=None):
