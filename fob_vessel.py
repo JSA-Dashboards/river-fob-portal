@@ -125,14 +125,32 @@ def save(rows):
         data = [(a, s, float(v)) for a, s, v in rows if v is not None]
         if not data:
             return 0
-        if db._is_postgres():
+        # Branch on the ACTIVE backend, not _is_postgres(): under USE_SNOWFLAKE the
+        # connection is Snowflake even though DATABASE_URL is still set for rollback.
+        backend = db._backend()
+        if backend == "postgres":
             from psycopg2.extras import execute_values
             execute_values(
                 cur,
                 "INSERT INTO fob_vessel_history (as_of, symbol, value) VALUES %s "
                 "ON CONFLICT (as_of, symbol) DO UPDATE SET value = excluded.value",
                 data, page_size=1000)
-        else:
+        elif backend == "snowflake":
+            # Snowflake has no ON CONFLICT — upsert on (as_of, symbol) via a
+            # chunked multi-row MERGE.
+            for i in range(0, len(data), 500):
+                part = data[i:i + 500]
+                src = ",".join([f"({ph},{ph},{ph})"] * len(part))
+                cur.execute(
+                    "MERGE INTO fob_vessel_history t USING ("
+                    "SELECT column1::string AS as_of, column2::string AS symbol, "
+                    "column3::float AS value FROM VALUES " + src + ") s "
+                    "ON t.as_of = s.as_of AND t.symbol = s.symbol "
+                    "WHEN MATCHED THEN UPDATE SET value = s.value "
+                    "WHEN NOT MATCHED THEN INSERT (as_of, symbol, value) "
+                    "VALUES (s.as_of, s.symbol, s.value)",
+                    [x for r in part for x in r])
+        else:  # sqlite
             cur.executemany(
                 f"INSERT INTO fob_vessel_history VALUES ({ph},{ph},{ph}) "
                 f"ON CONFLICT (as_of, symbol) DO UPDATE SET value = excluded.value",
