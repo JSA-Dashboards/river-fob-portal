@@ -46,23 +46,26 @@ the two portals where it must stay unset.
 original script and was **absent from it** until 2026-09-06 — it would have been
 silently skipped. If you add another table, add it to both `DDL` and `COLS`.
 
-## Three other apps still read this data from Supabase
+## Who else reads this data — migration status
 
-Not yet migrated. They connect with raw `psycopg2` and have no backend
-abstraction:
-
-| Consumer | Reads via |
+| Consumer | Status |
 |---|---|
-| `jsa-admin-portal` → `apps/river_fob/db.py` | **has no Snowflake code at all** — the `_backend`/`_SFConn`/`_sf_connect` block exists only in this repo |
-| `apps/basis_tracker/river_fob_data.py` (both repos) | `RIVER_DATABASE_URL` |
-| `apps/rail_fob/river_data.py` | `RIVER_DATABASE_URL` |
+| `basis-tracker-streamlit/river_fob_data.py` | **Snowflake** (Snowflake-only since 6c344a4, 2026-09) |
+| `jsa-admin-portal` → `apps/river_fob/db.py` + `bids_data.py` | **Snowflake** (migrated 2026-09-18) |
+| `jsa-admin-portal` → `apps/rail_fob/river_data.py` + `rail_data.py` | **Snowflake** (migrated 2026-09-18) |
+| `jsa-admin-portal` → `apps/basis_tracker/*` | retired redirect stub — never reaches a DB |
+| **standalone `rail-fob-portal`** (`rail_data.py` + `river_data.py`) | **Snowflake** (migrated 2026-09-18) |
 
-**Supabase cannot be retired until those three move.** When porting, note the
-collision: the admin portal sets `SNOWFLAKE_DATABASE = "JSA"` globally, but this
-data lives in `RIVER_FOB`. The portal already solved the same shape for Postgres
-by renaming to `RIVERFOB_DATABASE_URL`; the Snowflake path needs equivalent
-treatment or River FOB will look in `JSA` and find nothing — silently, with
-empty tabs and no error.
+**All consumers are now on Snowflake — Supabase can be decommissioned** once the
+migrated apps are deployed and verified. Both portals that cross-read pin their
+own database/schema per module (self-contained `_sf_connect`), and the
+`*_DATABASE_URL` secrets survive only as a `USE_SNOWFLAKE`-off rollback.
+
+**The `SNOWFLAKE_DATABASE` collision when porting:** the admin portal sets
+`SNOWFLAKE_DATABASE = "JSA"` globally, but this data lives in `RIVER_FOB`. Every
+migrated module pins `database="RIVER_FOB", schema="PUBLIC"` at connect time
+(basis-tracker data pins `JSA`/`BASIS_TRACKER`) — miss that and River FOB looks
+in `JSA`, finds nothing, and shows empty with no error.
 
 ## Deployment
 
