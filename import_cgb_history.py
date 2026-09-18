@@ -235,8 +235,9 @@ def run(lo, hi, commit):
         print(f"\nDRY RUN - nothing written. {len(parsed)} snapshots ready. "
               "Re-run with --commit.")
         return
-    if not db._is_postgres():
-        print("\nREFUSING: DATABASE_URL not set (would hit local SQLite). Aborting.")
+    if db._backend() == "sqlite":
+        print("\nREFUSING: no shared backend configured (would hit local SQLite). "
+              "Set USE_SNOWFLAKE + SNOWFLAKE_* or DATABASE_URL. Aborting.")
         sys.exit(1)
 
     db.init_db()
