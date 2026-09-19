@@ -67,6 +67,19 @@ migrated module pins `database="RIVER_FOB", schema="PUBLIC"` at connect time
 (basis-tracker data pins `JSA`/`BASIS_TRACKER`) — miss that and River FOB looks
 in `JSA`, finds nothing, and shows empty with no error.
 
+## Scheduled jobs — on the Droplet, not the desktop (as of 2026-09-19)
+
+Both Windows Task Scheduler jobs on Kolten's desktop are **retired (Disabled)**:
+
+| Old desktop task | Ran | Replaced by |
+|---|---|---|
+| `FobVesselDailyImport` | `fob_vessel_import.py` (Fastmarkets FOB Vessel → Snowflake) | **Droplet cron** — `deploy/run_vessel.sh`, `0 16 * * 1-5`, on the shared basis-tracker Droplet at `/opt/river-fob-portal`. See `deploy/DROPLET_SETUP.md`. |
+| `RiverFobDailyImport` | `daily_fob_import.py` (CIF/freight from the local Excel workbook) | **Nothing — retired.** The `JSA FOB Sheet …xlsx` workbook is no longer used at all; daily CIF/freight/futures entry is done **in-app** (📝 Inputs tab → "Paste daily tables" → Save to archive → Snowflake). |
+
+So there is no workbook-based auto-import anywhere. `daily_fob_import.py`,
+`import_fob_master.py`, and the workbook backfill scripts are historical only.
+The only scheduled job for this portal is the Droplet's FOB Vessel pull.
+
 ## Deployment
 
 - Branch `master`, main file `app.py`, Python 3.14
