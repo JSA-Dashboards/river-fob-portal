@@ -1,0 +1,7 @@
+# Minimal dependencies for the scheduled FOB Vessel import (fob_vessel_import.py)
+# on the Droplet. The job needs none of the app's UI/chart stack (streamlit,
+# pandas, altair, plotly, kaleido, reportlab) — only a Snowflake connection, the
+# Fastmarkets HTTP client, and .env loading.
+snowflake-connector-python>=3.7
+requests>=2.28
+python-dotenv

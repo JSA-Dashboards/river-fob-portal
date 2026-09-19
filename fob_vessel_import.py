@@ -7,7 +7,8 @@ Run daily:   python fob_vessel_import.py
 Backfill:    python fob_vessel_import.py --backfill 2024-08-13 2026-08-12
              (Fastmarkets history is capped at a 2-year range per call.)
 
-Needs DATABASE_URL + FOB_VESSEL_SERVICE_NAME + FOB_VESSEL_API_KEY (from .env /
+Needs a shared backend (USE_SNOWFLAKE + SNOWFLAKE_* for RIVER_FOB, or
+DATABASE_URL) plus FOB_VESSEL_SERVICE_NAME + FOB_VESSEL_API_KEY (from .env /
 Streamlit secrets).
 """
 import os
@@ -28,9 +29,11 @@ import fob_vessel as V
 
 
 def main():
-    if not db._is_postgres():
-        print("DATABASE_URL not set — refusing to write to the SQLite fallback.")
+    if db._backend() == "sqlite":
+        print("No shared backend configured (set USE_SNOWFLAKE + SNOWFLAKE_* or "
+              "DATABASE_URL) — refusing to write to the SQLite fallback.")
         sys.exit(1)
+    print(f"Backend: {db.backend_name()}")
     if not V.configured():
         print("Fastmarkets creds not set (FOB_VESSEL_SERVICE_NAME / "
               "FOB_VESSEL_API_KEY).")
