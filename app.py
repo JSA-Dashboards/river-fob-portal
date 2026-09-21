@@ -4019,7 +4019,7 @@ _DISCLAIMER = (
     "intended solely for the use of the designated recipient. "
     f"&copy; John Stewart &amp; Associates, Inc. {dt.date.today().year}")
 st.markdown(
-    '<div style="margin-top:1.5rem;padding-top:0.7rem;border-top:1px solid #e0e0e0;'
+    '<div style="font-family:inherit;margin-top:1.5rem;padding-top:0.7rem;border-top:1px solid #e0e0e0;'
     'font-size:0.68rem;line-height:1.4;color:#8a9199;text-align:justify;">'
     f'{_DISCLAIMER}</div>',
     unsafe_allow_html=True)
