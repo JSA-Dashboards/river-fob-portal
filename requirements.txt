@@ -1,4 +1,4 @@
-streamlit>=1.36
+streamlit>=1.55   # dynamic tabs (on_change="rerun" + tab.open) for lazy tab rendering
 pandas>=2.0
 altair>=5.0
 # Changes-table PNGs render via plotly + kaleido. On Streamlit Cloud (headless
