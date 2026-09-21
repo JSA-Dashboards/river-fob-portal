@@ -66,21 +66,44 @@ class _SFConn:
         return self._conn.close()
 
 
+def _load_private_key():
+    """RSA private key for Snowflake key-pair auth (the account enforces MFA on
+    password sign-ins), as DER bytes; None if not configured (falls back to password).
+    Source: SNOWFLAKE_PRIVATE_KEY_PATH (.p8 file) or SNOWFLAKE_PRIVATE_KEY (PEM text)."""
+    path = (os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH") or "").strip()
+    pem = os.environ.get("SNOWFLAKE_PRIVATE_KEY") or ""
+    if not path and not pem.strip():
+        return None
+    from cryptography.hazmat.primitives import serialization
+    data = open(path, "rb").read() if path else pem.replace("\\n", "\n").encode()
+    pwd = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PWD") or None
+    key = serialization.load_pem_private_key(data, password=pwd.encode() if pwd else None)
+    return key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption())
+
+
 def _sf_connect():
     """Fresh Snowflake connection from the SNOWFLAKE_* environment (set locally
     from .env, on Streamlit Cloud from st.secrets via the app's secret bridge).
+    Prefers key-pair auth (the account enforces MFA on passwords); password fallback.
     Forces %s-style binding so the shared SQL works unchanged."""
     import snowflake.connector as sc
     kw = dict(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ.get("SNOWFLAKE_PASSWORD") or None,
         role=os.environ.get("SNOWFLAKE_ROLE") or None,
         warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE") or None,
         database=os.environ.get("SNOWFLAKE_DATABASE") or None,
         schema=os.environ.get("SNOWFLAKE_SCHEMA") or None,
         login_timeout=30,
     )
+    _pkey = _load_private_key()
+    if _pkey is not None:
+        kw["private_key"] = _pkey
+    else:
+        kw["password"] = os.environ.get("SNOWFLAKE_PASSWORD") or None
     conn = sc.connect(**{k: v for k, v in kw.items() if v is not None})
     try:
         conn._paramstyle = "pyformat"
