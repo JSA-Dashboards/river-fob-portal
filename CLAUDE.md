@@ -31,8 +31,20 @@ omitting `SNOWFLAKE_DATABASE` yields a connection with no database at all.
 Setting `SNOWFLAKE_SCHEMA` is correct here; this is a single-purpose app, unlike
 the two portals where it must stay unset.
 
-`DATABASE_URL` is intentionally left in the secrets as a rollback: clear
-`USE_SNOWFLAKE` and the app is back on Supabase immediately.
+`DATABASE_URL` was intentionally left in the secrets as a Supabase rollback
+(clear `USE_SNOWFLAKE` and the FOB archive is back on Supabase). That copy is
+frozen ~2026-09-03, so the rollback now yields stale data — it can be deleted
+once the Supabase project is decommissioned; while present it is inert
+(`USE_SNOWFLAKE` wins in `_backend()`).
+
+**`BASIS_DATABASE_URL` was removed from the secrets (2026-09-20).** The River
+Bids tab reads bids from Snowflake `JSA.BASIS_TRACKER` now — `bids_data.py`
+`configured()` is true on Snowflake alone and `_sf_rows()` does `USE SCHEMA
+JSA.BASIS_TRACKER` on the portal's own connection. `BASIS_DATABASE_URL` was only
+used by the `_pg_rows()` path (reached only when `USE_SNOWFLAKE` is off), and it
+pointed at the retired/frozen ca-central-1 Supabase basis-tracker copy — a latent
+trap that would have served stale bids if `USE_SNOWFLAKE` were ever cleared. Do
+not re-add it.
 
 ## Six tables, not five
 
