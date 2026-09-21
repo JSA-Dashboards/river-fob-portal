@@ -240,6 +240,7 @@ def save_snapshot(as_of, cif_by_commodity, freight_by_region, calendar=None,
             cur.executemany(
                 f"INSERT INTO spreads_history VALUES ({ph},{ph},{ph},{ph},{ph})", spr_rows)
         conn.commit()
+        _invalidate_read_cache(as_of)   # this date's snapshot + the date list
         return len(cif_rows), len(frt_rows)
     finally:
         conn.close()
@@ -275,8 +276,35 @@ def load_extras(as_of):
         conn.close()
 
 
+# --- In-process read cache --------------------------------------------------
+# Render paths call list_dates()/load_snapshot() several times per run, and on
+# Snowflake each call is a fresh key-pair handshake (~1s). Memoize both reads in
+# the process (shared across Streamlit sessions); save_snapshot() invalidates.
+# The archive is otherwise immutable, so a short TTL on the date list is safe.
+import time as _time
+
+_DATES_CACHE = {"ts": 0.0, "val": None}
+_SNAP_CACHE = {}                 # as_of -> (cif, frt, cal)
+_DATES_TTL = 300                 # seconds
+
+
+def _invalidate_read_cache(as_of=None):
+    """Drop memoized reads. Called on every write so saves show immediately."""
+    _DATES_CACHE["ts"] = 0.0
+    _DATES_CACHE["val"] = None
+    if as_of is None:
+        _SNAP_CACHE.clear()
+    else:
+        _SNAP_CACHE.pop(as_of, None)
+
+
 def list_dates():
-    """All archived as-of dates, newest first."""
+    """All archived as-of dates, newest first. Memoized ~5 min in-process — many
+    callers hit this per render, each otherwise a fresh Snowflake handshake;
+    save_snapshot() invalidates it."""
+    now = _time.time()
+    if _DATES_CACHE["val"] is not None and now - _DATES_CACHE["ts"] < _DATES_TTL:
+        return list(_DATES_CACHE["val"])
     conn, _ = _connect()
     try:
         cur = conn.cursor()
@@ -284,7 +312,10 @@ def list_dates():
             SELECT as_of FROM cif_history
             UNION SELECT as_of FROM freight_history
             ORDER BY as_of DESC""")
-        return [r[0] for r in cur.fetchall()]
+        val = [r[0] for r in cur.fetchall()]
+        _DATES_CACHE["ts"] = now
+        _DATES_CACHE["val"] = val
+        return list(val)
     finally:
         conn.close()
 
@@ -294,7 +325,15 @@ def load_snapshot(as_of):
 
     calendar: {commodity: [(month, contract), ...]} in column order.
     Returns (None, None, None) if the date has no data.
+
+    Memoized per date in-process (a render loads several snapshots, each a fresh
+    Snowflake handshake). Archived snapshots are immutable; the only mutable date
+    is the one being edited, which save_snapshot() invalidates. Callers treat the
+    result as read-only.
     """
+    hit = _SNAP_CACHE.get(as_of)
+    if hit is not None:
+        return hit
     conn, ph = _connect()
     try:
         cur = conn.cursor()
@@ -316,9 +355,11 @@ def load_snapshot(as_of):
         cal = {}
         for c, _seq, m, ct in cur.fetchall():
             cal.setdefault(c, []).append((m, ct))
-        if not cif and not frt:
-            return None, None, None
-        return cif, frt, cal
+        result = (None, None, None) if (not cif and not frt) else (cif, frt, cal)
+        if len(_SNAP_CACHE) > 512:       # bound memory; snapshots are immutable
+            _SNAP_CACHE.clear()
+        _SNAP_CACHE[as_of] = result
+        return result
     finally:
         conn.close()
 
