@@ -3911,98 +3911,68 @@ if VIEW_ONLY:
     if not HIST_DATE or hist_cif is None:
         st.info("No archived data available to view yet.")
     else:
-        # Dynamic tabs: only the visible tab's body runs, so a load no longer
-        # pays for the Snowflake (River Bids / FOB Vessel) and USDA (Barge) tabs
-        # unless the client actually opens them.
         tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
                        + ["📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                          "🚢 FOB Vessel", "⚓ Barge Data"], on_change="rerun")
-        if tabs[0].open:
-            with tabs[0]:
-                render_changes_tab(view_date, cur=(hist_cif, hist_frt),
-                                   allow_download=False)
+                          "🚢 FOB Vessel", "⚓ Barge Data"])
+        with tabs[0]:
+            render_changes_tab(view_date, cur=(hist_cif, hist_frt),
+                               allow_download=False)
         for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
-            if tab.open:
-                with tab:
-                    _render_archived_commodity(commodity)
-        if tabs[-5].open:
-            with tabs[-5]:
-                render_seasonal_tab()
-        if tabs[-4].open:
-            with tabs[-4]:
-                render_cashdel_tab()
-        if tabs[-3].open:
-            with tabs[-3]:
-                render_riverbids_tab()
-        if tabs[-2].open:
-            with tabs[-2]:
-                render_fob_vessel_tab()
-        if tabs[-1].open:
-            with tabs[-1]:
-                render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt),
-                                           allow_download=False)
+            with tab:
+                _render_archived_commodity(commodity)
+        with tabs[-5]:
+            render_seasonal_tab()
+        with tabs[-4]:
+            render_cashdel_tab()
+        with tabs[-3]:
+            render_riverbids_tab()
+        with tabs[-2]:
+            render_fob_vessel_tab()
+        with tabs[-1]:
+            render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt),
+                                       allow_download=False)
 elif HIST_DATE:
     tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
                    + ["📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"],
-                   on_change="rerun")
-    if tabs[0].open:
-        with tabs[0]:
-            render_changes_tab(view_date, cur=(hist_cif, hist_frt))
-    if tabs[-6].open:
-        with tabs[-6]:
-            render_seasonal_tab()
-    if tabs[-5].open:
-        with tabs[-5]:
-            render_cashdel_tab()
-    if tabs[-4].open:
-        with tabs[-4]:
-            render_riverbids_tab()
-    if tabs[-3].open:
-        with tabs[-3]:
-            render_fob_vessel_tab()
-    if tabs[-2].open:
-        with tabs[-2]:
-            render_export_tab()
-    if tabs[-1].open:
-        with tabs[-1]:
-            render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt))
+                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"])
+    with tabs[0]:
+        render_changes_tab(view_date, cur=(hist_cif, hist_frt))
+    with tabs[-6]:
+        render_seasonal_tab()
+    with tabs[-5]:
+        render_cashdel_tab()
+    with tabs[-4]:
+        render_riverbids_tab()
+    with tabs[-3]:
+        render_fob_vessel_tab()
+    with tabs[-2]:
+        render_export_tab()
+    with tabs[-1]:
+        render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt))
     for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
-        if tab.open:
-            with tab:
-                _render_archived_commodity(commodity)
+        with tab:
+            _render_archived_commodity(commodity)
 else:
     tabs = st.tabs(["📊 Changes", "📝 Inputs"] + M.COMMODITIES
                    + ["📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"],
-                   on_change="rerun")
-    if tabs[0].open:
-        with tabs[0]:
-            render_changes_tab(as_of)
-    if tabs[1].open:
-        with tabs[1]:
-            render_inputs_tab(as_of)
-    if tabs[-6].open:
-        with tabs[-6]:
-            render_seasonal_tab()
-    if tabs[-5].open:
-        with tabs[-5]:
-            render_cashdel_tab()
-    if tabs[-4].open:
-        with tabs[-4]:
-            render_riverbids_tab()
-    if tabs[-3].open:
-        with tabs[-3]:
-            render_fob_vessel_tab()
-    if tabs[-2].open:
-        with tabs[-2]:
-            render_export_tab()
-    if tabs[-1].open:
-        with tabs[-1]:
-            render_barge_dashboard_tab(as_of)
+                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"])
+    with tabs[0]:
+        render_changes_tab(as_of)
+    with tabs[1]:
+        render_inputs_tab(as_of)
+    with tabs[-6]:
+        render_seasonal_tab()
+    with tabs[-5]:
+        render_cashdel_tab()
+    with tabs[-4]:
+        render_riverbids_tab()
+    with tabs[-3]:
+        render_fob_vessel_tab()
+    with tabs[-2]:
+        render_export_tab()
+    with tabs[-1]:
+        render_barge_dashboard_tab(as_of)
     for tab, commodity in zip(tabs[2:2 + len(M.COMMODITIES)], M.COMMODITIES):
-        if not tab.open:
-            continue
         with tab:
             df = st.session_state[f"cif_{commodity}"]
             cif_row = {m: df.loc[m, "CIF"] for m in M.MONTHS}
