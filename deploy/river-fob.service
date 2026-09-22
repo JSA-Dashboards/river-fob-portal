@@ -1,0 +1,35 @@
+# systemd unit for the River FOB Portal Streamlit app, self-hosted on the Droplet.
+# Install to /etc/systemd/system/river-fob.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now river-fob
+#
+# The app reads /opt/river-fob-portal/.env via load_dotenv() at startup, so all
+# secrets (USE_SNOWFLAKE + SNOWFLAKE_* + FOB_VESSEL_* + MASSIVE_API_KEY +
+# EDIT_PASSWORD) come from that one file — no .streamlit/secrets.toml needed.
+#
+# Bound to 127.0.0.1 only: nginx is the sole public entry point (Phase 2). The
+# app is never exposed directly.
+[Unit]
+Description=River FOB Portal (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/river-fob-portal
+# CORS/XSRF are Streamlit's own browser-origin guards; behind nginx+Cloudflare
+# TLS those are handled at the proxy, and leaving them on breaks the websocket
+# through a reverse proxy. headless=true stops it trying to open a browser.
+ExecStart=/opt/river-fob-portal/.venv/bin/streamlit run app.py \
+  --server.port 8525 \
+  --server.address 127.0.0.1 \
+  --server.headless true \
+  --server.enableCORS false \
+  --server.enableXsrfProtection false \
+  --browser.gatherUsageStats false
+Restart=always
+RestartSec=5
+# Matches the box's existing convention (cron jobs + whatsapp run as root).
+User=root
+
+[Install]
+WantedBy=multi-user.target
