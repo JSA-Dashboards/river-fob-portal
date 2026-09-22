@@ -69,39 +69,51 @@ not, stop here — `sudo systemctl disable --now river-fob` and we rethink.
 
 ---
 
-## Phase 2 — expose it over TLS at a real hostname
+## Phase 2 — expose it over TLS at riverfob.jpsi.com
 
-Pick a hostname (see the note in `nginx-river-fob.conf`). Everything below uses
-`RIVERFOB_HOST` as a stand-in.
+Hostname: **riverfob.jpsi.com** (change the label if you prefer, e.g.
+`fob.jpsi.com` — keep it identical across the DNS record, the cert, and the
+nginx `server_name`). jpsi.com is not on the box's Cloudflare zone, so we use a
+free **Let's Encrypt** cert via certbot.
 
-### 5. DNS (Cloudflare)
+### 5. DNS (jpsi.com — may need IT)
 
-Add an **A record**: `RIVERFOB_HOST` → `137.184.195.51`, **Proxied** (orange
-cloud) so Cloudflare terminates the client TLS. Confirm the Cloudflare SSL mode
-for the zone is **Full (strict)** (it already is if the WhatsApp host works).
+Add an **A record**: `riverfob.jpsi.com` → `137.184.195.51`, **DNS-only** (not
+proxied — certbot's HTTP-01 challenge and nginx serve this host directly). If
+jpsi.com's DNS is managed by IT, this is the one thing to hand off. Confirm it
+resolves before continuing:
 
-### 6. nginx vhost
+```bash
+dig +short riverfob.jpsi.com          # should print 137.184.195.51
+```
+
+### 6. nginx vhost + cert
 
 ```bash
 sudo cp /opt/river-fob-portal/deploy/nginx-river-fob.conf /etc/nginx/sites-available/river-fob
-sudo nano /etc/nginx/sites-available/river-fob     # set server_name = RIVERFOB_HOST;
-                                                   # set the two ssl_certificate lines
-                                                   # (copy them from the wa.jsa-whatsapp.us vhost)
+# (edit server_name if you chose a different label; see the map-collision note
+#  in the file if the wa.jsa-whatsapp.us vhost already defines $connection_upgrade)
 sudo ln -s /etc/nginx/sites-available/river-fob /etc/nginx/sites-enabled/river-fob
 sudo nginx -t && sudo systemctl reload nginx
+
+# Obtain the cert and let certbot add the TLS block + HTTP->HTTPS redirect:
+sudo apt install -y certbot python3-certbot-nginx        # if not already present
+sudo certbot --nginx -d riverfob.jpsi.com
 ```
+
+certbot installs a renewal timer automatically; nothing else to do for renewals.
 
 ### 7. Verify
 
-Browse **https://RIVERFOB_HOST/?view=1** — it should load fast and switch tabs
-instantly, with a valid padlock. Check the socket connected (no "Connecting…"
-spinner stuck).
+Browse **https://riverfob.jpsi.com/?view=1** — valid padlock, loads fast, tabs
+switch instantly, no stuck "Connecting…" spinner. Then check the edit build:
+**https://riverfob.jpsi.com/** should prompt for `EDIT_PASSWORD`.
 
 ### 8. Cut over
 
-Hand clients the new URL. **Keep the Streamlit Cloud app up as a fallback** for a
-week or two before retiring it. Once you retire Cloud, remove the `warm_ping.sh`
-cron line (it only existed to keep Cloud awake).
+Hand clients `https://riverfob.jpsi.com/?view=1`. **Keep the Streamlit Cloud app
+up as a fallback** for a week or two before retiring it. Once you retire Cloud,
+remove the `warm_ping.sh` cron line (it only existed to keep Cloud awake).
 
 ---
 
@@ -114,7 +126,7 @@ cron line (it only existed to keep Cloud awake).
 - **The FOB Vessel cron is unaffected** — it still writes to Snowflake on its own
   schedule; the app just reads it.
 - **Failure alerting:** consider adding a healthchecks.io check that pings
-  `https://RIVERFOB_HOST/_stcore/health`, so you're told if the app goes down
+  `https://riverfob.jpsi.com/_stcore/health`, so you're told if the app goes down
   (the systemd `Restart=always` handles crashes, but not a wedged process).
 
 ### Notes / hardening (optional)
