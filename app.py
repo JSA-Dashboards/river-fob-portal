@@ -4020,6 +4020,6 @@ _DISCLAIMER = (
     f"&copy; John Stewart &amp; Associates, Inc. {dt.date.today().year}")
 st.markdown(
     '<div style="font-family:inherit;margin-top:1.5rem;padding-top:0.7rem;border-top:1px solid #e0e0e0;'
-    'font-size:0.68rem;line-height:1.4;color:#8a9199;text-align:justify;">'
+    'font-size:inherit;line-height:1.4;color:#8a9199;text-align:justify;">'
     f'{_DISCLAIMER}</div>',
     unsafe_allow_html=True)
