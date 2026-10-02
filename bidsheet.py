@@ -18,12 +18,28 @@ Layout (1-indexed columns on the 'Bid Sheet' tab):
 Blank cells are closed reaches / absent months and are simply skipped.
 """
 import datetime as dt
+import os
+import re
 
 import openpyxl
 
 import db
 import fob_model as M
 from paste_parse import _MONTHS
+
+
+def date_from_filename(name):
+    """MMDDYY in the file name -> date (e.g. '100226.xlsx' -> 2026-10-02), else
+    None. Doug names the file by the sheet's REAL date; the A1 cell is NOT
+    reliable (it has been seen a day behind the actual sheet)."""
+    m = re.search(r"(\d{2})(\d{2})(\d{2})", os.path.basename(str(name or "")))
+    if not m:
+        return None
+    mm, dd, yy = (int(x) for x in m.groups())
+    try:
+        return dt.date(2000 + yy, mm, dd)
+    except ValueError:
+        return None
 
 # Freight source column -> FOB freight region(s). D (L OHIO) and I (ARK) omitted.
 FREIGHT_COLS = {2: ["IL"], 3: ["Ohio"], 5: ["Davenport South", "McGregor South"],
@@ -33,14 +49,25 @@ CIF_COLS = {"Corn": (13, 14), "Soybeans": (17, 18), "Wheat": (19, 20)}
 _PRE = {"Corn": "C", "Soybeans": "S", "Wheat": "W"}
 
 
-def parse_bidsheet(path):
-    """-> (as_of: date, cif, freight, contracts). Raises if there's no Bid Sheet tab."""
+def parse_bidsheet(path, as_of=None):
+    """-> (as_of: date, cif, freight, contracts). Raises if there's no Bid Sheet tab.
+
+    The as-of date comes from (in priority): an explicit `as_of`, then the file
+    NAME (MMDDYY), then the A1 cell as a last resort. A1 is unreliable — it has
+    been a day behind the real sheet — so callers should pass the date derived
+    from the attachment filename / email."""
     wb = openpyxl.load_workbook(path, data_only=True)
     if "Bid Sheet" not in wb.sheetnames:
         raise ValueError(f"No 'Bid Sheet' tab in {path} (tabs: {wb.sheetnames})")
     ws = wb["Bid Sheet"]
-    a1 = ws["A1"].value
-    as_of = a1.date() if isinstance(a1, dt.datetime) else dt.date.fromisoformat(str(a1)[:10])
+    if as_of is None:
+        a1 = ws["A1"].value
+        a1_date = (a1.date() if isinstance(a1, dt.datetime)
+                   else (dt.date.fromisoformat(str(a1)[:10]) if a1 else None))
+        as_of = date_from_filename(path) or a1_date
+    if as_of is None:
+        raise ValueError(f"Could not determine as-of date for {path} "
+                         "(no override, no date in filename, empty A1).")
 
     cif, freight, contracts = {}, {}, {}
     for r in range(3, 13):                       # TW, NW, Sept..Apr
@@ -82,10 +109,11 @@ def build_payload(as_of, cif, freight, contracts):
     return cif2, frt2, cal
 
 
-def save_bidsheet(path, commit=False):
+def save_bidsheet(path, as_of=None, commit=False):
     """Parse the Bid Sheet at `path` and (if commit) upsert it into the archive.
+    Pass `as_of` (from the attachment filename / email date) — A1 is unreliable.
     Returns a summary dict. Idempotent: save_snapshot replaces the date's rows."""
-    as_of, cif, freight, contracts = parse_bidsheet(path)
+    as_of, cif, freight, contracts = parse_bidsheet(path, as_of=as_of)
     cif2, frt2, cal = build_payload(as_of, cif, freight, contracts)
     was_present = as_of.isoformat() in {str(d)[:10] for d in db.list_dates()}
     out = dict(as_of=as_of.isoformat(), was_present=was_present,
