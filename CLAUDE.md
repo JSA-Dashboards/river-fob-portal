@@ -58,6 +58,14 @@ not re-add it.
 original script and was **absent from it** until 2026-09-06 — it would have been
 silently skipped. If you add another table, add it to both `DDL` and `COLS`.
 
+**There is also a seventh table, `save_lock`, and it holds no data.** It's a
+one-row coordination table that every Snowflake `save_snapshot` UPDATEs to
+serialize writers (see "Two writers, no duplicates" below). It's deliberately
+**not** in `setup_standalone.py`: there's nothing to migrate, and
+`db._begin_save()` creates it on first use. It's owned by `ACCOUNTADMIN` like its
+siblings, and the schema's future grants give `RIVER_FOB_ROLE` UPDATE on it. Don't
+drop it as clutter.
+
 ## Who else reads this data — migration status
 
 | Consumer | Status |
@@ -90,14 +98,25 @@ Both Windows Task Scheduler jobs on Kolten's desktop are **retired (Disabled)**:
 
 So there is no workbook-based auto-import anywhere. `daily_fob_import.py`,
 `import_fob_master.py`, and the workbook backfill scripts are historical only.
-The only scheduled job for this portal is the Droplet's FOB Vessel pull.
+
+Scheduled jobs for this portal now (as of 2026-10-04):
+
+| Job | Where | When (CT) |
+|---|---|---|
+| FOB Vessel pull (`deploy/run_vessel.sh`) | Droplet cron | 4:00 PM weekdays |
+| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | 4:30 + 6:30 PM weekdays |
+| Bid Sheet freshness alert (`deploy/run_bidsheet_check.sh`) | Droplet cron | 5:00 PM weekdays |
+
+The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
 
 ## Bid Sheet email import + the futures guard
 
 Daily CIF/freight now comes from Doug Schultz's **Bid Sheet** email (an `.xlsx`
 named `MMDDYY.xlsx`, tab `Bid Sheet`, A1:T16), parsed by `bidsheet.py` and
-upserted to Snowflake — this is the live daily path, **superseding the in-app
-"Paste daily tables" workflow** in the table above. Two front-ends call the same
+upserted to Snowflake. This is the automated daily path. The in-app
+**📝 Inputs → Paste daily tables → Save to archive** stays as the manual path,
+for a late sheet or a correction. Both write the same archive, and neither can
+duplicate a day (see "Two writers, no duplicates" below). Two front-ends call the same
 `bidsheet.save_bidsheet()`: `fetch_bidsheet_email.py` (desktop Outlook COM,
 Windows Task `RiverFobBidSheetImport`, live) and `fetch_bidsheet_graph.py`
 (droplet Microsoft Graph, pending IT granting `Mail.Read` on app `19283e00`).
@@ -125,6 +144,65 @@ Massive serves CURRENT prices only, so this is not a way to backfill futures for
 an OLD date — you get today's board. When the droplet/Graph job goes live,
 `MASSIVE_API_KEY` must be in `/opt/river-fob-portal/.env` or the guard has no
 board to check against.
+
+### Two writers, no duplicates
+
+The 📝 paste and the email import both call `db.save_snapshot`, which
+**replaces** the date's rows rather than appending them. Re-saving a day never
+duplicates it, whichever path saves first. The import also **skips a date that's
+already archived** (`--force` overrides). So a day you paste first is never
+overwritten by the 4:30/6:30 import, while a paste after the import replaces it,
+which is how you correct a day.
+
+**On Snowflake, "replaces" took more than DELETE-then-INSERT (fixed 2026-10-04).**
+The connector autocommits every statement, and Snowflake does **not** enforce
+the PRIMARY KEYs that `init_db()` declares for SQLite/Postgres. So a paste and an
+import saving the same date at the same moment could run DELETE, DELETE, INSERT,
+INSERT and leave the day's rows doubled. A save that died partway could also
+leave a half-written day. Measured on scratch tables before the fix:
+
+| How the save ran | Existing date | Brand-new date |
+|---|---|---|
+| autocommit (old code) | **duplicated** | **duplicated** |
+| one explicit transaction | OK | **duplicated**: a 0-row DELETE takes no lock |
+| transaction + `save_lock` UPDATE first | OK | OK |
+
+**A transaction alone is not enough,** and the brand-new date is the normal case
+(the first save of each day). So `_begin_save()` opens a transaction and UPDATEs
+the one-row `save_lock` table before touching data. The second writer blocks on
+that UPDATE until the first COMMITs, then replaces the date cleanly. Verified on
+real data with two simultaneous identical saves of 10/2: one waited 15.8s
+against the other's 8.1s, row counts and values were unchanged, and there were
+zero duplicate keys. Any new Snowflake write path to these five tables must go
+through `save_snapshot`, or call `_begin_save()` itself.
+
+**The Cloud app needs a reboot to pick this up** (pushing doesn't deploy here).
+Until it's rebooted, its Save button still runs the old autocommit code, which
+never waits on the lock, so the race is closed only once every writer runs the
+new `db.py`.
+
+### 5 PM freshness alert
+
+`check_bidsheet_fresh.py` runs on the Droplet at **5:00 PM CT weekdays**
+(`deploy/run_bidsheet_check.sh` under `cron-alert`). If today's date (America/Chicago)
+isn't archived, it emails **kpostin@ + cjacobs@jpsi.com** from
+`basis-tracker@jpsi.com` via Graph app-only `sendMail`, the same pattern as
+`/opt/alerting/notify.py`. It reads only Snowflake, never the mailbox, so it still
+fires when the desktop that runs the import is off, which is the main way a day
+gets missed.
+
+- **Exit codes:** a missing day sends its own plain-language email and exits **0**,
+  so `cron-alert` doesn't send a second, crash-style email. Exit **3** means a real
+  error (Snowflake or Graph unreachable), which `cron-alert` reports as a failure.
+- **A late sheet emails at 5 and still fills at 6:30.** That was chosen
+  (2026-10-04): an early heads-up beat waiting until after the 6:30 retry.
+- **Holidays:** `HOLIDAYS` in the script lists sure full grain-market closures
+  through 2027. Extend it yearly, or add `BIDSHEET_SKIP_DATES` to the droplet
+  `.env`. List only sure closures: a wrong entry silences a real alert, while a
+  missing one costs one harmless email.
+- **Recipients:** `DEFAULT_TO` in the script; `BIDSHEET_ALERT_TO` overrides.
+- `--check` proves Snowflake + Graph `Mail.Send` and sends nothing. `--dry-run`
+  prints the email. `--force-send` sends it regardless, to test delivery.
 
 ## Deployment
 
