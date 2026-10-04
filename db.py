@@ -193,6 +193,32 @@ def init_db():
         conn.close()
 
 
+# One-row table that every Snowflake save UPDATEs first, inside its transaction.
+# See save_snapshot for why.
+SAVE_LOCK = "save_lock"
+
+
+def _begin_save(conn, cur):
+    """Open the save transaction and take the save lock (Snowflake only).
+
+    Creates the lock table and row on first use. CREATE TABLE is DDL, and DDL
+    commits any open transaction, so the create runs between transactions,
+    never inside one."""
+    cur.execute("BEGIN")
+    try:
+        cur.execute(f"UPDATE {SAVE_LOCK} SET n = n + 1 WHERE id = 1")
+        if cur.rowcount:
+            return
+    except Exception:
+        pass                                   # table missing: created below
+    conn.rollback()
+    cur.execute(f"CREATE TABLE IF NOT EXISTS {SAVE_LOCK} (id INTEGER, n INTEGER)")
+    cur.execute(f"INSERT INTO {SAVE_LOCK} SELECT 1, 0 WHERE NOT EXISTS "
+                f"(SELECT 1 FROM {SAVE_LOCK} WHERE id = 1)")
+    cur.execute("BEGIN")
+    cur.execute(f"UPDATE {SAVE_LOCK} SET n = n + 1 WHERE id = 1")
+
+
 def save_snapshot(as_of, cif_by_commodity, freight_by_region, calendar=None,
                   futures=None, spreads=None):
     """Upsert one day's inputs. as_of is an ISO date string.
@@ -202,10 +228,26 @@ def save_snapshot(as_of, cif_by_commodity, freight_by_region, calendar=None,
     futures (optional): {commodity: {month: flat_price}} — the CBOT curve.
     spreads (optional): {commodity: [(label, value), ...]} — inter-contract
         spreads in order.
+
+    Replaces the date's rows, so re-saving a day never duplicates it. On
+    Snowflake that takes more than DELETE-then-INSERT. The connector autocommits
+    each statement and Snowflake doesn't enforce the PRIMARY KEYs, so two saves
+    of one date at once (a 📝 paste and the Bid Sheet import, say) could run
+    DELETE, DELETE, INSERT, INSERT and double the day's rows. A transaction
+    alone doesn't stop that either: a DELETE that matches 0 rows takes no lock,
+    so on a brand-new date (the normal first save of the day) both writers go
+    straight through. So every Snowflake save is one transaction that UPDATEs
+    the one-row save_lock table first. The second writer waits there until the
+    first COMMITs, then replaces the date cleanly. Tested on scratch tables
+    2026-10-04: autocommit duplicated, a bare transaction duplicated a new date,
+    and the lock row did not. The single transaction also means a save that
+    dies partway rolls back instead of leaving a half-written day.
     """
     conn, ph = _connect()
     try:
         cur = conn.cursor()
+        if _backend() == "snowflake":
+            _begin_save(conn, cur)
         for t in ("cif_history", "freight_history", "calendar_history",
                   "futures_history", "spreads_history"):
             cur.execute(f"DELETE FROM {t} WHERE as_of = {ph}", (as_of,))
@@ -242,6 +284,12 @@ def save_snapshot(as_of, cif_by_commodity, freight_by_region, calendar=None,
         conn.commit()
         _invalidate_read_cache(as_of)   # this date's snapshot + the date list
         return len(cif_rows), len(frt_rows)
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
