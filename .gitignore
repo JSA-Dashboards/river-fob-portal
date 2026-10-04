@@ -29,6 +29,9 @@ MANIFEST
 # Secrets
 .env
 .env.*
+# Snowflake key-pair keys (the droplet keeps river_fob_svc.p8 in the repo dir)
+*.p8
+*.pem
 
 # Streamlit
 .streamlit/secrets.toml
