@@ -14,6 +14,12 @@ Needs in the .env: GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
     python fetch_bidsheet_graph.py            # fetch + save (idempotent)
     python fetch_bidsheet_graph.py --check     # verify auth + find the email, save nothing
     python fetch_bidsheet_graph.py --force     # re-save even if the date is archived
+    python fetch_bidsheet_graph.py --allow-no-futures  # save CIF/freight even if the
+                                               # CBOT board didn't pull (no carry data)
+
+By default the save REFUSES to commit unless the live CBOT board pulled from
+Massive (so a Massive blip can't archive a carry-less day); it exits 2 so the
+cron run is flagged and the next one retries. Pass --allow-no-futures to override.
 """
 import os
 import sys
@@ -123,6 +129,7 @@ def _newest_bidsheet(access, mailbox):
 def main():
     force = "--force" in sys.argv
     check = "--check" in sys.argv
+    allow_no_fut = "--allow-no-futures" in sys.argv
     if db._backend() == "sqlite":
         log.error("No shared backend (USE_SNOWFLAKE + SNOWFLAKE_*) — refusing SQLite.")
         sys.exit(1)
@@ -148,9 +155,15 @@ def main():
         log.info("Newest Bid Sheet is %s (email '%s', %s) — already archived; "
                  "nothing to do. Use --force to re-save.", as_of, subject, received)
         return
-    res = bidsheet.save_bidsheet(tmp, as_of=as_of, commit=True)
-    log.info("SAVED %s from '%s' (%s): %d CIF, %d freight rows%s",
-             res["as_of"], subject, received, res["n_cif"], res["n_frt"],
+    try:
+        res = bidsheet.save_bidsheet(tmp, as_of=as_of, commit=True,
+                                     require_futures=not allow_no_fut)
+    except bidsheet.FuturesUnavailable as e:
+        log.error("%s", e)
+        sys.exit(2)                               # flagged; the next cron run retries
+    log.info("SAVED %s from '%s' (%s): %d CIF, %d freight, %d futures%s%s",
+             res["as_of"], subject, received, res["n_cif"], res["n_frt"], res["n_fut"],
+             "" if res["futures_complete"] else " [futures INCOMPLETE]",
              " [UPDATED existing]" if res["was_present"] else " [new]")
 
 

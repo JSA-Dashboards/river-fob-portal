@@ -13,6 +13,11 @@ Run daily via Windows Task Scheduler, late afternoon (Doug sends ~4pm CT):
     C:\\Python314\\python.exe "<repo>\\fetch_bidsheet_email.py"
 Needs: pywin32 (Outlook COM), the repo .env (USE_SNOWFLAKE + SNOWFLAKE_*).
 Pass --force to re-save a date that's already archived (e.g. a corrected sheet).
+
+By default the save REFUSES to commit unless the live CBOT board pulled from
+Massive (so a Massive blip can't archive a carry-less day); it exits 2 so the
+task is flagged and the next run retries. Pass --allow-no-futures to override
+and save CIF/freight only.
 """
 import os
 import sys
@@ -90,6 +95,7 @@ def _newest_bidsheet_xlsx():
 
 def main():
     force = "--force" in sys.argv
+    allow_no_fut = "--allow-no-futures" in sys.argv
     if db._backend() == "sqlite":
         log.error("No shared backend (set USE_SNOWFLAKE + SNOWFLAKE_*) — refusing SQLite.")
         sys.exit(1)
@@ -109,9 +115,15 @@ def main():
         log.info("Newest Bid Sheet is %s (email '%s', %s) — already archived; "
                  "nothing to do. Use --force to re-save.", as_of, subject, received)
         return
-    res = bidsheet.save_bidsheet(tmp, as_of=as_of, commit=True)
-    log.info("SAVED %s from '%s' (%s): %d CIF, %d freight rows%s",
-             res["as_of"], subject, received, res["n_cif"], res["n_frt"],
+    try:
+        res = bidsheet.save_bidsheet(tmp, as_of=as_of, commit=True,
+                                     require_futures=not allow_no_fut)
+    except bidsheet.FuturesUnavailable as e:
+        log.error("%s", e)
+        sys.exit(2)                               # flagged; the next run retries
+    log.info("SAVED %s from '%s' (%s): %d CIF, %d freight, %d futures%s%s",
+             res["as_of"], subject, received, res["n_cif"], res["n_frt"], res["n_fut"],
+             "" if res["futures_complete"] else " [futures INCOMPLETE]",
              " [UPDATED existing]" if res["was_present"] else " [new]")
 
 

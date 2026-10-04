@@ -109,22 +109,40 @@ def build_payload(as_of, cif, freight, contracts):
     return cif2, frt2, cal
 
 
-def _live_futures_spreads(cal, as_of):
+def _futures_complete(fut, front):
+    """True only when EVERY commodity has a price for the front month — that's
+    what the carry chart's net-of-interest leg anchors on."""
+    return bool(fut) and all((fut.get(c) or {}).get(front) is not None
+                             for c in M.COMMODITIES)
+
+
+def _live_futures_spreads(cal, as_of, tries=3):
     """Live CBOT board from Massive + the spreads it implies, so the carry charts
     (gross-carry shape + the net-of-interest overlay) work for imported dates.
 
     The Bid Sheet's OWN futures are live Eikon formulas that arrive as #N/A in the
     emailed file, so they can't be read from the attachment — we pull the board
     from Massive instead (the same source the app uses for the live fed-funds
-    rate). Returns ({}, {}) if Massive isn't configured or errors; the import then
-    still saves CIF + freight, just without the carry/net overlay for that day."""
+    rate). Retries a few times for a transient Massive blip. Returns ({}, {}) if
+    Massive isn't configured; the completeness check is left to the caller."""
     try:
         import massive_futures as MF
         if not MF.configured():
             return {}, {}
-        fut = MF.futures_for_calendar(cal, as_of)
     except Exception:
         return {}, {}
+    import time
+    front = (cal.get(M.COMMODITIES[0]) or [(None,)])[0][0]
+    fut = {}
+    for attempt in range(max(1, tries)):
+        try:
+            fut = MF.futures_for_calendar(cal, as_of)
+        except Exception:
+            fut = {}
+        if _futures_complete(fut, front):
+            break
+        if attempt < tries - 1:
+            time.sleep(2)
     spr = {}
     for c in M.COMMODITIES:
         cons = [ct for _m, ct in cal.get(c, [])]
@@ -138,23 +156,42 @@ def _live_futures_spreads(cal, as_of):
     return fut, spr
 
 
-def save_bidsheet(path, as_of=None, commit=False):
+class FuturesUnavailable(RuntimeError):
+    """Raised when the CBOT board didn't pull from Massive, so committing would
+    save a carry-less day. The caller can retry later or override."""
+
+
+def save_bidsheet(path, as_of=None, commit=False, require_futures=True):
     """Parse the Bid Sheet at `path` and (if commit) upsert it into the archive.
     Pass `as_of` (from the attachment filename / email date) — A1 is unreliable.
     Also pulls the live CBOT board + spreads from Massive so the carry charts work.
-    Returns a summary dict. Idempotent: save_snapshot replaces the date's rows."""
+
+    `require_futures` (default True): refuse to commit unless Massive returned a
+    front-month price for every commodity — so a Massive blip can't silently
+    upload a day with no carry/net data. Pass False to force a CIF+freight-only
+    save. Returns a summary dict (`futures_complete` says whether the board is
+    whole). Idempotent: save_snapshot replaces the date's rows."""
     as_of, cif, freight, contracts = parse_bidsheet(path, as_of=as_of)
     cif2, frt2, cal = build_payload(as_of, cif, freight, contracts)
     fut, spr = _live_futures_spreads(cal, as_of)
+    months = M.months_for(as_of)
+    complete = _futures_complete(fut, months[0] if months else None)
     was_present = as_of.isoformat() in {str(d)[:10] for d in db.list_dates()}
     out = dict(as_of=as_of.isoformat(), was_present=was_present,
                n_cif=sum(len(v) for v in cif2.values()),
                n_frt=sum(len(v) for v in frt2.values()),
-               n_fut=sum(len(v) for v in fut.values()))
+               n_fut=sum(len(v) for v in fut.values()),
+               futures_complete=complete)
     if commit:
         if db._backend() == "sqlite":
             raise RuntimeError("Refusing to write to the SQLite fallback — set "
                                "USE_SNOWFLAKE + SNOWFLAKE_* (or DATABASE_URL).")
+        if require_futures and not complete:
+            raise FuturesUnavailable(
+                f"CBOT board did not pull from Massive for {as_of} "
+                f"(commodities with futures: {sorted(c for c in fut if fut[c])}). "
+                "Refusing to upload a carry-less day — re-run when Massive is up, "
+                "or save with require_futures=False.")
         db.save_snapshot(as_of.isoformat(), cif2, frt2, cal, futures=fut, spreads=spr)
         out["committed"] = True
     return out
