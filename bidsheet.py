@@ -109,20 +109,52 @@ def build_payload(as_of, cif, freight, contracts):
     return cif2, frt2, cal
 
 
+def _live_futures_spreads(cal, as_of):
+    """Live CBOT board from Massive + the spreads it implies, so the carry charts
+    (gross-carry shape + the net-of-interest overlay) work for imported dates.
+
+    The Bid Sheet's OWN futures are live Eikon formulas that arrive as #N/A in the
+    emailed file, so they can't be read from the attachment — we pull the board
+    from Massive instead (the same source the app uses for the live fed-funds
+    rate). Returns ({}, {}) if Massive isn't configured or errors; the import then
+    still saves CIF + freight, just without the carry/net overlay for that day."""
+    try:
+        import massive_futures as MF
+        if not MF.configured():
+            return {}, {}
+        fut = MF.futures_for_calendar(cal, as_of)
+    except Exception:
+        return {}, {}
+    spr = {}
+    for c in M.COMMODITIES:
+        cons = [ct for _m, ct in cal.get(c, [])]
+        months = [m for m, _ in cal.get(c, [])]
+        try:
+            labels = M.spread_labels_for(c, cons)
+            vals = M.spreads_from_futures(c, fut.get(c, {}), contracts=cons, months=months)
+            spr[c] = list(zip(labels, vals))
+        except Exception:
+            pass
+    return fut, spr
+
+
 def save_bidsheet(path, as_of=None, commit=False):
     """Parse the Bid Sheet at `path` and (if commit) upsert it into the archive.
     Pass `as_of` (from the attachment filename / email date) — A1 is unreliable.
+    Also pulls the live CBOT board + spreads from Massive so the carry charts work.
     Returns a summary dict. Idempotent: save_snapshot replaces the date's rows."""
     as_of, cif, freight, contracts = parse_bidsheet(path, as_of=as_of)
     cif2, frt2, cal = build_payload(as_of, cif, freight, contracts)
+    fut, spr = _live_futures_spreads(cal, as_of)
     was_present = as_of.isoformat() in {str(d)[:10] for d in db.list_dates()}
     out = dict(as_of=as_of.isoformat(), was_present=was_present,
                n_cif=sum(len(v) for v in cif2.values()),
-               n_frt=sum(len(v) for v in frt2.values()))
+               n_frt=sum(len(v) for v in frt2.values()),
+               n_fut=sum(len(v) for v in fut.values()))
     if commit:
         if db._backend() == "sqlite":
             raise RuntimeError("Refusing to write to the SQLite fallback — set "
                                "USE_SNOWFLAKE + SNOWFLAKE_* (or DATABASE_URL).")
-        db.save_snapshot(as_of.isoformat(), cif2, frt2, cal)
+        db.save_snapshot(as_of.isoformat(), cif2, frt2, cal, futures=fut, spreads=spr)
         out["committed"] = True
     return out
