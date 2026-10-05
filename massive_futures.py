@@ -11,6 +11,7 @@ Key from the environment (MASSIVE_API_KEY, in the gitignored .env / secrets).
 import os
 import re
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 
 import massive_api as MA
 
@@ -73,14 +74,26 @@ def futures_for_calendar(calendar, as_of=None):
     """calendar: {commodity: [(month, contract), ...]} from a snapshot's chain.
     -> {commodity: {month: price $/bu}} using live CBOT settlements. Commodities
     without a Massive product (none here) and contracts with no live price are
-    simply omitted, so callers can fall back to the workbook value."""
+    simply omitted, so callers can fall back to the workbook value.
+
+    The curves are fetched in parallel. Each is an independent ~7s HTTP pull
+    (massive_api uses a plain requests.get per call, with no shared session or
+    cache), so doing them at once takes the board from ~22s to ~8s, the
+    slowest step of the Bid Sheet import."""
+    wanted = [c for c in (calendar or {}) if c in PRODUCT]
+
+    def _curve(commodity):
+        try:
+            return commodity, cbot_curve(commodity, as_of)
+        except Exception:
+            return commodity, None
+
+    with ThreadPoolExecutor(max_workers=max(1, len(wanted))) as pool:
+        curves = dict(pool.map(_curve, wanted))
     out = {}
     for commodity, cols in (calendar or {}).items():
-        if commodity not in PRODUCT:
-            continue
-        try:
-            curve = cbot_curve(commodity, as_of)
-        except Exception:
+        curve = curves.get(commodity)
+        if not curve:
             continue
         row = {}
         for month, contract in cols:

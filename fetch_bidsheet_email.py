@@ -9,8 +9,10 @@ This is the desktop stop-gap (no IT needed). The droplet/Graph version will
 replace it once Graph `Mail.Read` is granted (see deploy/IT_REQUEST_mail_read.md);
 both front-ends call the same `bidsheet.save_bidsheet()`.
 
-Run daily via Windows Task Scheduler, late afternoon (Doug sends ~4pm CT):
+Windows Task `RiverFobBidSheetImport` runs it every 10 minutes, 3:30-7:00 PM CT on
+weekdays (Doug sends ~4pm), so a sheet is archived within ~10 min of arriving:
     C:\\Python314\\python.exe "<repo>\\fetch_bidsheet_email.py"
+Most polls exit early on a local note of the last sheet handled (LAST_DONE).
 Needs: pywin32 (Outlook COM), the repo .env (USE_SNOWFLAKE + SNOWFLAKE_*).
 Pass --force to re-save a date that's already archived (e.g. a corrected sheet).
 
@@ -23,6 +25,7 @@ import os
 import sys
 import tempfile
 import logging
+import datetime as dt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -37,6 +40,11 @@ import db
 
 SENDER_FILTER = "schultz"     # matches Doug Schultz / dschultz@jpsi.com
 MAX_SCAN = 120                # how many recent inbox items to look through
+# The task polls every 10 min through the afternoon. This local note of the newest
+# sheet date already handled lets most polls exit without an Outlook scan or a
+# Snowflake query. Each query wakes the warehouse, which bills a minute minimum.
+# Losing the file only costs one extra Snowflake check.
+LAST_DONE = os.path.join(tempfile.gettempdir(), "river_fob_bidsheet_last_done.txt")
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -93,9 +101,28 @@ def _newest_bidsheet_xlsx():
     return None, None, None, None
 
 
+def _last_done():
+    try:
+        return dt.date.fromisoformat(open(LAST_DONE).read().strip())
+    except Exception:
+        return None
+
+
+def _mark_done(as_of):
+    try:
+        with open(LAST_DONE, "w") as f:
+            f.write(as_of.isoformat())
+    except OSError:
+        pass
+
+
 def main():
     force = "--force" in sys.argv
     allow_no_fut = "--allow-no-futures" in sys.argv
+    done = None if force else _last_done()
+    if done is not None and done >= dt.date.today():
+        log.info("Today's Bid Sheet (%s) is already archived; nothing to do.", done)
+        return
     if db._backend() == "sqlite":
         log.error("No shared backend (set USE_SNOWFLAKE + SNOWFLAKE_*) — refusing SQLite.")
         sys.exit(1)
@@ -110,8 +137,13 @@ def main():
         log.info("No Bid Sheet email found in the last %d from '%s' — nothing to do.",
                  MAX_SCAN, SENDER_FILTER)
         return
+    if done is not None and as_of <= done:
+        log.info("Newest Bid Sheet is still %s (email '%s'), already archived; "
+                 "nothing to do. Use --force to re-save.", as_of, subject)
+        return
     archived = as_of.isoformat() in {str(d)[:10] for d in db.list_dates()}
     if archived and not force:
+        _mark_done(as_of)
         log.info("Newest Bid Sheet is %s (email '%s', %s) — already archived; "
                  "nothing to do. Use --force to re-save.", as_of, subject, received)
         return
@@ -121,6 +153,7 @@ def main():
     except bidsheet.FuturesUnavailable as e:
         log.error("%s", e)
         sys.exit(2)                               # flagged; the next run retries
+    _mark_done(as_of)
     log.info("SAVED %s from '%s' (%s): %d CIF, %d freight, %d futures%s%s",
              res["as_of"], subject, received, res["n_cif"], res["n_frt"], res["n_fut"],
              "" if res["futures_complete"] else " [futures INCOMPLETE]",

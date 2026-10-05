@@ -104,7 +104,7 @@ Scheduled jobs for this portal now (as of 2026-10-04):
 | Job | Where | When (CT) |
 |---|---|---|
 | FOB Vessel pull (`deploy/run_vessel.sh`) | Droplet cron | 4:00 PM weekdays |
-| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | 4:30 + 6:30 PM weekdays |
+| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | every 10 min, 3:30–7:00 PM weekdays |
 | Bid Sheet freshness alert (`deploy/run_bidsheet_check.sh`) | Droplet cron | 5:00 PM weekdays |
 
 The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
@@ -194,8 +194,9 @@ gets missed.
 - **Exit codes:** a missing day sends its own plain-language email and exits **0**,
   so `cron-alert` doesn't send a second, crash-style email. Exit **3** means a real
   error (Snowflake or Graph unreachable), which `cron-alert` reports as a failure.
-- **A late sheet emails at 5 and still fills at 6:30.** That was chosen
-  (2026-10-04): an early heads-up beat waiting until after the 6:30 retry.
+- **A sheet arriving after ~4:50 emails at 5 and still fills by the next
+  10-minute poll.** That was chosen (2026-10-04): an early heads-up beat waiting
+  until the import window closes at 7 PM.
 - **Holidays:** `HOLIDAYS` in the script lists sure full grain-market closures
   through 2027. Extend it yearly, or add `BIDSHEET_SKIP_DATES` to the droplet
   `.env`. List only sure closures: a wrong entry silences a real alert, while a
