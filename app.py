@@ -4083,7 +4083,7 @@ def _render_netcarry_body():
             return measure
         RTCB.render(
             obs=obs, quotes=quotes, asof=sheet_date, grain=commodity, measure=measure, tab_rate_pct=rate_pct,
-            load_futures=_nc_futures_history, load_prime=_nc_prime, load_fed_funds=_nc_fed_funds, logo_uri=None,
+            load_futures=_nc_futures_history, load_prime=_nc_prime, load_fed_funds=_nc_fed_funds, logo_uri=None, scope=f"river|{loc}",
             note=f"History: {loc}'s nearby FOB barge basis on each weekly sheet in the archive (September 2006 on), quoted against "
                  "the contract the sheet maps that month to — FOB = CIF NOLA less barge freight (tariff x freight % / 2000 x bushel "
                  "weight). The upper-river reaches have no FOB while the river is closed in winter, so their weekly series has "

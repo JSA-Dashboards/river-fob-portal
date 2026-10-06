@@ -303,8 +303,13 @@ drives it and the comparison; the section also shows when the selected sheet has
 - **Corn 2007-08:** the stored futures hold no Dec 2007 front contract that autumn; its Oct 3 - Nov 28 prices come from the
   analyst's sheet via the vendored `data/rtc_futures_1996_2006.csv`, so the Dec/Mar roll measures (+17.25). The engine, its
   validation against the analyst's workbooks and the soybean rules live in the tracker (`CLAUDE.md` there).
-- **Checks:** `python tests/test_river_carry.py` (the archive -> inputs, pure), `tests/test_return_to_carry*.py` (vendored) and the
-  futures-history tests in `tests/test_net_carry_data.py`.
+- **Harvest basis (2026-10-06; Kolten: "add the ability to apply your own harvest basis into the models, but default to the
+  calculated method"):** the block's **Harvest basis** switch — Calculated (default) or My own, a number in cents vs Dec / Jan that
+  measures the crop year being tracked (the as-of sheet's): the shipment table, and the history when that year has weekly bids; a
+  what-if box applies it to every year. Vendored — see the tracker's `CLAUDE.md`. The call passes `scope=f"river|{loc}"` so a number typed
+  for one location never follows the user to another (the widget keys carry it); keep passing it.
+- **Checks:** `python tests/test_river_carry.py` (the archive -> inputs, pure), `tests/test_return_to_carry*.py` (vendored; the
+  `_block` one drives the block headless with AppTest) and the futures-history tests in `tests/test_net_carry_data.py`.
 
 ### Traps hit while building it
 
