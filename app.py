@@ -37,6 +37,30 @@ import fob_vessel
 import massive_futures
 import barge_flows as BF
 
+# Net Carry tab: modules vendored unchanged from the basis tracker (sync_carry_modules.py there) plus this
+# portal's adapter + HTML. A failed import must not take the whole portal down - the tab says why instead.
+try:
+    import carry_rate as CR
+    import net_carry as NC
+    import net_carry_chart as NCC
+    import net_carry_compare as NCMP
+    import net_carry_data as NCD
+    import net_carry_view as NCV
+    _NC_IMPORT_ERR = None
+except Exception as _nc_exc:
+    CR = NC = NCC = NCMP = NCD = NCV = None
+    _NC_IMPORT_ERR = f"{type(_nc_exc).__name__}: {_nc_exc}"
+
+# The Return to Carry history under the Net Carry tab (river_carry + return_to_carry*, vendored from the tracker too). Guarded
+# on its own so a runtime that cannot load it costs only that section.
+try:
+    import river_carry as RC
+    import return_to_carry_block as RTCB
+    _RTC_IMPORT_ERR = None
+except Exception as _rtc_exc:
+    RC = RTCB = None
+    _RTC_IMPORT_ERR = f"{type(_rtc_exc).__name__}: {_rtc_exc}"
+
 # Local convenience: load a .env if python-dotenv is installed. It's optional —
 # on Streamlit Cloud there is no .env and secrets come from st.secrets (below),
 # so a missing package must never crash the app.
@@ -3919,12 +3943,293 @@ def _render_archived_commodity(commodity):
                        fut_row=fut_row)
 
 
+# --- 💵 Net Carry tab ------------------------------------------------------
+# The basis tracker's Net Carry (carry ladder net of interest, the top of net carry, the "Cash Fwd Curve" chart,
+# a side-by-side of locations) for the river sheet. The logic is the tracker's, vendored unchanged;
+# net_carry_data.py maps the sheet's months / contracts / CBOT row / FOB onto it and net_carry_view.py draws it.
+# Its interest is NOT the sheet's "% Full Carry" interest - see "Net Carry tab" in CLAUDE.md.
+@st.cache_data(show_spinner=False, ttl=6 * 3600)
+def _nc_fed_funds():
+    """Effective fed funds history (FRED, else the committed snapshot) - the default rate is this + 2.25%.
+    A short timeout: every tab runs on every rerun, so a slow FRED must not hold the page up for long."""
+    return CR.load_fed_funds(timeout=4.0)
+
+
+@st.cache_data(show_spinner="Loading the FOB sheet history…", ttl=3600)
+def _nc_archive():
+    """Every archived sheet (weekly since 2006-09) as river_carry reads it: {'cif', 'freight', 'calendar'}, each {as_of: ...}."""
+    cif, frt, cal = db.fetch_all()
+    return {"cif": cif, "freight": frt, "calendar": cal}
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _nc_series(location, commodity):
+    """(weekly nearby FOB, forward quotes) of a location for the Return to Carry history, from the archive."""
+    arch = _nc_archive()
+    return RC.nearby_obs(arch, location, commodity), RC.forward_quotes(arch, location, commodity)
+
+
+@st.cache_data(show_spinner="Loading the futures history…", ttl=6 * 3600)
+def _nc_futures_history(root):
+    """{date: {symbol: cents}} for every ZC / ZS contract (the basis tracker's FUTURES_PRICES over the analyst-sheet weeks)."""
+    return NCD.futures_history(root)
+
+
+@st.cache_data(show_spinner=False, ttl=6 * 3600)
+def _nc_prime():
+    """Bank prime history (FRED DPRIME, committed snapshot offline): the rate the Return to Carry report itself charges."""
+    return CR.load_prime()
+
+
+def _nc_toolbar(snap_id, filename):
+    """📥 PNG + 📋 Copy under a Net Carry table / chart (editable app only - _snap_toolbar hides itself in the
+    read-only view). If the snapshot helper ever breaks, the tab still draws without it."""
+    try:
+        _snap_toolbar(snap_id, filename)
+    except Exception:
+        pass
+
+
+def _nc_price(cents):
+    """A futures price in cents as $/bu text with at least two decimals: 497.5 -> '4.975', 400 -> '4.00'."""
+    s = f"{cents / 100:.4f}".rstrip("0")
+    return f"{cents / 100:.{max(2, len(s.split('.')[1]))}f}"
+
+
+def _nc_sheet(commodity):
+    """The sheet the sidebar has selected, for one commodity:
+    (date, live, columns[(month, contract)], cif_row, fut_row, freight_by_region) - $/bu, keyed by month label.
+    Archived dates read what was already loaded for the commodity tabs (no extra database call); the working
+    sheet reads the Inputs-tab editors (blank cells come back as None)."""
+    # Nothing here reads the module-level M.MONTHS / M.CONTRACTS: this tab is a fragment, so a control in it re-runs
+    # only the tab, and those globals are shared by every session and rewritten by whichever session ran last.
+    if HIST_DATE:
+        cols = (hist_cal or {}).get(commodity)
+        columns = list(cols) if cols else list(zip(M.months_for(view_date), M.contracts_for(commodity, view_date)))
+        frt = {r: (hist_frt or {}).get(r) or {} for r in M.FREIGHT_REGIONS}
+        return (view_date, False, columns, (hist_cif or {}).get(commodity) or {},
+                (hist_fut or {}).get(commodity) or {}, frt)
+    df, fr = st.session_state[f"cif_{commodity}"], st.session_state.freight
+    months = list(df.index)                                  # the live window, as this session's editors hold it
+    pasted = st.session_state.get(f"contracts_{commodity}")  # a front rolled by hand on the pasted CIF sheet
+    contracts = list(pasted) if pasted and len(pasted) == len(months) else M.contracts_for(commodity, as_of)
+    return (as_of, True, list(zip(months, contracts)),
+            {m: _safe(df.loc[m, "CIF"]) for m in months},
+            {m: _safe(df.loc[m, "Futures"]) for m in months},
+            {r: {m: _safe(fr.loc[r, m]) for m in months} for r in M.FREIGHT_REGIONS})
+
+
+_fragment = getattr(st, "fragment", None) or (lambda f: f)     # st.fragment needs streamlit >= 1.37
+
+
+def _nc_stretch():
+    """width='stretch' on current Streamlit, use_container_width on the older ones that predate it."""
+    import inspect
+    return ({"width": "stretch"} if "width" in inspect.signature(st.altair_chart).parameters
+            else {"use_container_width": True})
+
+
+def _render_netcarry_body():
+    st.markdown("### 💵 Net Carry — carry ladder by delivery month")
+    st.markdown(NCV.CSS, unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        commodity = st.selectbox("Commodity", M.COMMODITIES, key="nc_commodity")
+    locs = [it[1] for it in M.BLOCK_LAYOUT if it[0] == "fob"]
+    with c2:
+        loc = st.selectbox("Location", locs, index=locs.index("STL") if "STL" in locs else 0,
+                           key="nc_location")
+    sheet_date, live, columns, cif_row, fut_row, frt = _nc_sheet(commodity)
+    iso = sheet_date.isoformat()
+    st.caption(("✏️ Working sheet — live inputs, not saved" if live else "📅 Archived sheet")
+               + f" · {sheet_date:%A, %B %d, %Y} · change the date in the sidebar.")
+
+    o1, o2, o3 = st.columns(3)
+    with o1:
+        ref_lbl = st.radio(
+            "Express basis vs", ["Front delivery's futures", "Nearest new-crop"], horizontal=True,
+            key="nc_refmode",
+            help="Front delivery's futures: the contract the nearest delivery month is priced off - it reads exactly "
+                 "as quoted and every later month is credited its futures spread vs that contract. Nearest "
+                 "new-crop: corn Dec / soy Nov / wheat Jul (only when the sheet prices it).")
+    with o2:
+        anchor_lbl = st.selectbox("Carry starts (interest = 0)", _MONTH_ABBR, index=9, key="nc_anchor")
+    cr = CR.rate_for(sheet_date, _nc_fed_funds())
+    with o3:
+        rate_pct = st.number_input(
+            "Interest rate (annual %)", min_value=0.0, max_value=25.0, step=0.01, format="%.2f",
+            value=min(25.0, round(cr.rate_pct, 2)), key=f"nc_rate_{iso}",
+            help="Defaults to the Cost of Carry sheet's rate: the effective fed funds rate on the sheet's date + "
+                 f"{CR.FED_FUNDS_SPREAD_PCT:.2f}%. Edit to use your own cost of funds.")
+    anchor_month = _MONTH_ABBR.index(anchor_lbl) + 1
+    rate = rate_pct / 100.0
+
+    def _return_to_carry():
+        """The basis tracker's Return to Carry block for this location: what storing from harvest has paid, crop year by crop
+        year, from the weekly FOB sheets in the archive (river_carry) — the history that no report ever covered. Needs no
+        ladder (a sheet without a price for this location can still show it). The View radio sits above it and also
+        drives the comparison, so this returns its measure."""
+        view = st.radio("View", ["Net of interest", "Gross carry (before interest)"], horizontal=True, key="nc_measure",
+                        help="Net of interest = after the interest to carry the grain. Gross carry = the same numbers before "
+                             "the interest. Applies to the return history below and to the comparison after it.")
+        measure = "net" if view.startswith("Net") else "gross"
+        if _RTC_IMPORT_ERR:
+            st.info(f"The return-to-carry history isn't available in this runtime ({_RTC_IMPORT_ERR}).")
+            return measure
+        try:
+            obs, quotes = _nc_series(loc, commodity)
+        except Exception as e:
+            st.warning(f"Couldn't read the FOB sheet history for the return-to-carry section ({type(e).__name__}: {e}).")
+            return measure
+        RTCB.render(
+            obs=obs, quotes=quotes, asof=sheet_date, grain=commodity, measure=measure, tab_rate_pct=rate_pct,
+            load_futures=_nc_futures_history, load_prime=_nc_prime, load_fed_funds=_nc_fed_funds, logo_uri=None,
+            note=f"History: {loc}'s nearby FOB barge basis on each weekly sheet in the archive (September 2006 on), quoted against "
+                 "the contract the sheet maps that month to — FOB = CIF NOLA less barge freight (tariff x freight % / 2000 x bushel "
+                 "weight). The upper-river reaches have no FOB while the river is closed in winter, so their weekly series has "
+                 "gaps. Corn's 2007-08 Dec/Mar roll uses the Dec 2007 prices from the analyst's 07colcry sheet (the stored futures lack that front contract).")
+        return measure
+
+    # -- the sheet in time + its futures, then this location's ladder -------------------------------
+    if not any(v is not None for v in (cif_row or {}).values()):
+        st.info(f"No {commodity} sheet (CIF) was saved for {sheet_date:%b %d, %Y}, so there is nothing to show.")
+        _return_to_carry()
+        return
+    sheet = NCD.build_sheet(commodity, sheet_date, columns, fut_row, live=live)
+    if sheet.problem:
+        st.info(f"Net carry can't be built for {commodity} on {sheet_date:%b %d, %Y}. {sheet.problem}")
+        _return_to_carry()
+        return
+    grid = M.compute_fob_grid(commodity, cif_row, frt, [c.label for c in sheet.columns])
+    items = NCD.items_for(sheet, grid.get(loc))
+    if len(items) < 2:
+        st.info(f"{loc} has {'only one' if items else 'no'} FOB value for {commodity} on this sheet "
+                f"(a closed river reach or a blank CIF), so there is no carry to show. Pick another location.")
+        _return_to_carry()
+        return
+
+    front_mode = ref_lbl.startswith("Front")
+    notes = list(sheet.notes)
+    ref_sym = NC.reference_symbol(commodity, "front" if front_mode else "newcrop", sheet.curve, sheet_date,
+                                  items=items, anchor_month=anchor_month)
+    if not front_mode and ref_sym not in sheet.curve:
+        notes.append(f"The nearest new-crop contract ({ref_sym}) isn't priced on this sheet, so the basis is "
+                     "expressed against the front delivery's futures instead.")
+        front_mode = True
+        ref_sym = NC.reference_symbol(commodity, "front", sheet.curve, sheet_date, items=items,
+                                      anchor_month=anchor_month)
+    rows, meta = NC.compute_net_carry(items, ref_sym, sheet.curve, anchor_month, rate)
+    mpts = NC.monthly_carry(rows)
+    top = NC.top_of_net_carry(mpts, meta["anchor_ym"]) if meta["ref_price"] is not None else None
+
+    st.markdown(NCV.summary_html(ref_sym, front_mode, meta["ref_price"], meta["per_month"], rate_pct, anchor_lbl),
+                unsafe_allow_html=True)
+    if top:
+        st.markdown(NCV.callout_html(top), unsafe_allow_html=True)
+    anote = NCV.anchor_note(meta, anchor_month, anchor_lbl)
+    if anote:
+        notes.append(anote)
+    n_from_start = len({r.ym for r in rows if meta["anchor_ym"] and r.ym >= meta["anchor_ym"]})
+    if n_from_start < 2:
+        notes.append(f"Only {n_from_start} delivery month falls at or after the carry start ({anchor_lbl}), so there "
+                     "is no carry to rank. Pick an earlier carry-start month.")
+    if not meta["all_converted"]:
+        notes.append("Some deliveries lack a futures price for their contract, so their rows show raw basis "
+                     "(flagged ·) and their carry may be off.")
+    for n in notes:
+        st.caption("⚠️ " + n)
+
+    # -- the table ------------------------------------------------------------------------------
+    title = f"{commodity} · FOB Barge {loc} · {sheet_date:%b %d, %Y}"
+    st.markdown(NCV.carry_table_html(rows, top["row"] if top else None, ref_sym, title,
+                                     banner=COMMODITY_THEME[commodity]), unsafe_allow_html=True)
+    _nc_toolbar("snap_nc_table", f"Net Carry {commodity} {loc} {sheet_date:%m-%d-%y}")
+
+    # how the numbers are built - under the table, so the answer comes first
+    if cr.source == "fallback":
+        rate_src = ("Fed funds history is unavailable, so the default is the Cost of Carry fallback rate, "
+                    f"{CR.FALLBACK_ANNUAL_RATE_PCT:.2f}%.")
+    else:
+        rate_src = (f"Default rate = effective fed funds {cr.fed_funds_pct:.2f}% ({cr.obs_date:%b %d, %Y}, "
+                    f"{'FRED' if cr.source == 'fred' else 'FRED snapshot'}) + {CR.FED_FUNDS_SPREAD_PCT:.2f}% "
+                    f"= {cr.rate_pct:.2f}%.")
+    st.caption("Interest = reference board price × rate × days ÷ 360 (actual days from the carry-start month) — "
+               "the Cost of Carry sheet's formula. " + rate_src)
+    st.caption(f"Quoted basis = {loc}'s FOB value from this sheet (CIF − tariff factor × freight % ÷ 2000 × bushel "
+               f"weight) in ¢/bu, against the contract each month is priced off. Futures spread = that contract's "
+               f"price minus {ref_sym or 'the reference'}'s, credited so every month is on the same footing: "
+               f"quoted basis + futures spread = basis vs {ref_sym or 'reference'}.")
+    st.caption("This is not the sheet's own “% Full Carry”: that row charges months × (storage + futures × interest "
+               "÷ 12) at the sidebar rate, while this tab charges price × rate × actual days ÷ 360 from the "
+               "carry-start month, so the two will not match.")
+    st.caption("Futures used, per bushel: " + " · ".join(f"{s} {_nc_price(p)}" for s, p in sheet.curve.items())
+               + (" — the CBOT row saved with this sheet." if not live
+                  else " — the working sheet's CBOT row (Inputs tab)."))
+
+    # -- Cash Fwd Curve (the tracker's chart; the portal's CSS draws the watermark behind it) ----
+    if len(mpts) >= 2:
+        ttl, sub = NCC.chart_titles(CHART_LABEL[commodity], ref_sym, loc)
+        chart = NCC.build_curve_chart(
+            mpts, top, title=ttl, subtitle=sub, curve_label=sheet_date.strftime("%m/%d/%y"),
+            net_label=f"Net of int (from {anchor_lbl})", anchor_ym=meta["anchor_ym"],
+            show_net=meta["ref_price"] is not None, logo_uri=None)
+        _snap_anchor("snap_nc_chart")
+        st.altair_chart(chart, **_nc_stretch())
+        _nc_toolbar("snap_nc_chart", f"Net Carry curve {commodity} {loc} {sheet_date:%m-%d-%y}")
+        st.caption(
+            f"Solid blue = each month's basis expressed against {ref_sym or 'its own futures'} (the Basis column). "
+            f"Orange dashed = the same curve net of interest from {anchor_lbl}; ▲ marks its top. One point per "
+            "calendar month — a month quoted twice (a 'Spot' column) uses its best quote; the table keeps both.")
+
+    # -- Return to carry: what storing this location's grain from harvest has paid ---------------------
+    measure = _return_to_carry()
+
+    # -- compare locations -----------------------------------------------------------------------
+    st.markdown(NCV.kicker_html("Compare locations along the curve"), unsafe_allow_html=True)
+    by_name = {l.name: l for l in M.LOCATIONS}
+    places = [(n, by_name[n].reach, by_name[n].factor) for n in locs if n in by_name]
+    picked = st.multiselect(
+        "Compare with", [n for n in locs if n != loc], default=NCD.default_peers(loc, places, 3),
+        key=f"nc_cmp_{commodity}_{loc}_{iso}_{'live' if live else 'arch'}",
+        help="River locations on this sheet. Starts with the nearest ones on the same river reach (by tariff "
+             "factor, topped up from the neighbouring reaches). Type to search.")
+    entries = [NCMP.Entry(f"r|{loc}", loc, "basis", items, sheet_date, True)]
+    entries += [NCMP.Entry(f"r|{p}", p, "basis", NCD.items_for(sheet, grid.get(p)), sheet_date) for p in picked]
+    res = NCMP.build_comparison(entries, ref_sym, sheet.curve, anchor_month, meta["anchor_ym"], rate,
+                                measure, sheet_date)
+    st.markdown(NCV.compare_card_html(NCMP.render_html(res)), unsafe_allow_html=True)
+    _nc_toolbar("snap_nc_compare", f"Net Carry compare {commodity} {sheet_date:%m-%d-%y}")
+    st.caption(
+        f"Every location is re-based to {ref_sym or 'its own futures'} on the same sheet, with interest from "
+        f"{anchor_lbl} at {rate_pct:.2f}% — so the columns compare directly. ★ = the location above · amber ▲ = "
+        f"that location's top of {'net' if measure == 'net' else 'gross'} carry · green = the best in that month. "
+        "“no recent quote” = no FOB value for that location on this sheet (closed reach or blank CIF).")
+    if len(entries) == 1:
+        st.caption("Pick more locations above to compare them with this one.")
+
+
+@_fragment
+def render_netcarry_tab():
+    """The 💵 Net Carry tab. A fragment, so changing a control here re-runs only this tab. Never raises: any
+    failure becomes a message on the tab, not a broken portal."""
+    if _NC_IMPORT_ERR:
+        st.warning(f"Net Carry is unavailable: its modules failed to load ({_NC_IMPORT_ERR}).")
+        return
+    try:
+        _render_netcarry_body()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        st.warning(f"Net Carry couldn't be built for this selection ({type(e).__name__}: {e}). "
+                   "Try another commodity, location or date.")
+
+
 if VIEW_ONLY:
     if not HIST_DATE or hist_cif is None:
         st.info("No archived data available to view yet.")
     else:
         tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
-                       + ["📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
+                       + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
                           "🚢 FOB Vessel", "⚓ Barge Data"])
         with tabs[0]:
             render_changes_tab(view_date, cur=(hist_cif, hist_frt),
@@ -3932,6 +4237,8 @@ if VIEW_ONLY:
         for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
             with tab:
                 _render_archived_commodity(commodity)
+        with tabs[1 + len(M.COMMODITIES)]:          # 💵 Net Carry sits right after the commodity sheets
+            render_netcarry_tab()
         with tabs[-5]:
             render_seasonal_tab()
         with tabs[-4]:
@@ -3945,10 +4252,12 @@ if VIEW_ONLY:
                                        allow_download=False)
 elif HIST_DATE:
     tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
-                   + ["📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
+                   + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
                       "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"])
     with tabs[0]:
         render_changes_tab(view_date, cur=(hist_cif, hist_frt))
+    with tabs[1 + len(M.COMMODITIES)]:              # 💵 Net Carry sits right after the commodity sheets
+        render_netcarry_tab()
     with tabs[-6]:
         render_seasonal_tab()
     with tabs[-5]:
@@ -3966,12 +4275,14 @@ elif HIST_DATE:
             _render_archived_commodity(commodity)
 else:
     tabs = st.tabs(["📊 Changes", "📝 Inputs"] + M.COMMODITIES
-                   + ["📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
+                   + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
                       "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"])
     with tabs[0]:
         render_changes_tab(as_of)
     with tabs[1]:
         render_inputs_tab(as_of)
+    with tabs[2 + len(M.COMMODITIES)]:              # 💵 Net Carry sits right after the commodity sheets
+        render_netcarry_tab()
     with tabs[-6]:
         render_seasonal_tab()
     with tabs[-5]:
