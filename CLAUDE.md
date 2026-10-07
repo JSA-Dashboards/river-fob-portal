@@ -71,7 +71,7 @@ drop it as clutter.
 | Consumer | Status |
 |---|---|
 | `basis-tracker-streamlit/river_fob_data.py` | **Snowflake** (Snowflake-only since 6c344a4, 2026-09) |
-| `jsa-admin-portal` → `apps/river_fob/db.py` + `bids_data.py` | **Snowflake** (migrated 2026-09-18) |
+| `jsa-admin-portal` → `apps/river_fob/db.py` + `bids_data.py` | **Dormant since 2026-10-06**: the portal's River FOB tile now opens this app (was a drifted copy; Snowflake since 2026-09-18) |
 | `jsa-admin-portal` → `apps/rail_fob/river_data.py` + `rail_data.py` | **Snowflake** (migrated 2026-09-18) |
 | `jsa-admin-portal` → `apps/basis_tracker/*` | retired redirect stub — never reaches a DB |
 | **standalone `rail-fob-portal`** (`rail_data.py` + `river_data.py`) | **Snowflake** (migrated 2026-09-18) |
@@ -205,6 +205,33 @@ gets missed.
 - `--check` proves Snowflake + Graph `Mail.Send` and sends nothing. `--dry-run`
   prints the email. `--force-send` sends it regardless, to test delivery.
 
+### Futures check before Save (2026-10-06)
+
+On 10/06 a paste on the admin portal's old copy of this page archived the Bid
+Sheet's cached Eikon futures: 12-14% under the market, and only 4 of 8 months.
+Because that paste saved first, the email import skipped the day by design.
+
+- **Fix:** the day was re-saved with the basis tracker's 10/06 settlements
+  (`JSA.BASIS_TRACKER.FUTURES_PRICES`, captured ~3:54 PM CT). That table is the
+  way to repair a past day's futures; Massive only has live prices.
+- **The admin portal tile now opens this app** instead of its own copy.
+- **Save check:** **💾 Save to archive** runs `_futures_issues()` on click. It
+  never runs on render, so the page never waits on Massive. It flags:
+  - months with no CBOT price;
+  - for today's sheet only, any contract more than `STALE_FUTURES_PCT` (3%) from
+    the live Massive board (`_live_cbot_board`, cached 5 min).
+- **What the user sees:** nothing is saved, and a warning offers **Save anyway**
+  or **Cancel**. This sits on top of the existing CIF/freight review checkbox
+  (`_save_guard`).
+- **Why 3%:** after the 7 PM reopen the live board is overnight trade, about 2%
+  off the close one evening.
+- **Test headless** with AppTest, as in the scratchpad's
+  `test_riverfob_save_check.py`:
+  - set `USE_SNOWFLAKE`, `DATABASE_URL` and `EDIT_PASSWORD` to `""`, so the repo
+    `.env` can't point it at the real archive;
+  - put the repo on `sys.path`;
+  - pick "✏️ Working (live)" in the sidebar first.
+
 ## 💵 Net Carry tab (added 2026-10-05)
 
 The basis tracker's **Net Carry** for the river sheet: pick a commodity and a river location and it lays out that
@@ -297,9 +324,12 @@ drives it and the comparison; the section also shows when the selected sheet has
 - **Futures:** `net_carry_data.futures_history(root)` — one query of the tracker's `FUTURES_PRICES` per commodity through
   `bids_data._sf_rows` (the same connection as the River Bids tab), over the analyst-sheet weeks in `data/rtc_futures_*.csv`.
   The portal's own `futures_history` (RIVER_FOB) only starts in 2023-02, so it cannot roll a hedge through 20 crop years.
-  **Needs read access to `JSA.BASIS_TRACKER.FUTURES_PRICES` for the role the Cloud app connects with** (`ADMIN_PORTAL_ROLE` and
-  `JSA_ANALYST` have it; `RIVER_FOB_ROLE` alone does not). Without it the block says it couldn't build the history and the rest
-  of the tab is unaffected.
+  **Needs read access to `JSA.BASIS_TRACKER.FUTURES_PRICES` for the role the Cloud app connects with.** The Cloud app runs as
+  `RIVER_FOB_SVC` / `RIVER_FOB_ROLE`. Since 2026-10-06 that role has USAGE on `JSA` + `JSA.BASIS_TRACKER` and SELECT on exactly
+  the four tables this app reads there: `FUTURES_PRICES` (this block) and `SNAPSHOTS`, `SNAPSHOT_ROWS`, `LOCATION_META` (the
+  River Bids tab). From the 10-04 switch to that role until then, both failed on the live app, including the `?view=1` client
+  link, with "Object does not exist, or operation cannot be performed". A new cross-read of the basis tracker needs its own
+  table grant. Without it the block says it couldn't build the history and the rest of the tab is unaffected.
 - **Corn 2007-08:** the stored futures hold no Dec 2007 front contract that autumn; its Oct 3 - Nov 28 prices come from the
   analyst's sheet via the vendored `data/rtc_futures_1996_2006.csv`, so the Dec/Mar roll measures (+17.25). The engine, its
   validation against the analyst's workbooks and the soybean rules live in the tracker (`CLAUDE.md` there).

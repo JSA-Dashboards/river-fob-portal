@@ -3694,6 +3694,67 @@ def _pull_massive_futures():
     return filled, done, None
 
 
+# A saved CBOT price further than this from the live board is treated as stale.
+# On 2026-10-06 a paste in the admin portal's copy of this page carried the Bid
+# Sheet's cached Eikon prices, 12-14% under the market, and only 4 of the 8
+# months. Not tighter: after the 7 PM reopen the "live" board is overnight trade,
+# which that evening already sat ~2% off the close, so a correct closing-price
+# save made at night would have been flagged.
+STALE_FUTURES_PCT = 3.0
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _live_cbot_board():
+    """{commodity: {month letter: $/bu}} from Massive, the three curves fetched in
+    parallel (~8s instead of ~22s). A commodity that fails comes back empty."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(commodity):
+        try:
+            return commodity, massive_futures.cbot_curve(commodity)
+        except Exception:
+            return commodity, {}
+
+    with ThreadPoolExecutor(max_workers=len(M.COMMODITIES)) as pool:
+        return dict(pool.map(_one, M.COMMODITIES))
+
+
+def _futures_issues(as_of):
+    """Plain-language problems with the working CBOT row, checked when Save is
+    clicked (not on every render, so the page never waits on Massive): months with
+    no price, and (for today's sheet only, since the live board says nothing about
+    an older date) contracts more than STALE_FUTURES_PCT from the Massive board.
+    No Massive key or no answer means only the missing-month check."""
+    from zoneinfo import ZoneInfo
+    today = dt.datetime.now(ZoneInfo("America/Chicago")).date()
+    board = (_live_cbot_board()
+             if as_of == today and massive_futures.configured() else {})
+    issues = []
+    for commodity in M.COMMODITIES:
+        df = st.session_state[f"cif_{commodity}"]
+        active = (st.session_state.get(f"contracts_{commodity}")
+                  or list(M.CONTRACTS[commodity]))
+        curve = board.get(commodity) or {}
+        missing, stale, checked = [], [], set()
+        for i, mth in enumerate(M.MONTHS):
+            v = _safe(df.loc[mth, "Futures"])
+            if v is None:
+                missing.append(mth)
+                continue
+            code = active[i] if i < len(active) else None
+            if not code or code in checked:
+                continue
+            checked.add(code)
+            live = curve.get(code[-1])
+            if live and abs(v - live) / live * 100 > STALE_FUTURES_PCT:
+                stale.append(f"{code} {v:.4f} vs {live:.4f} live ({(v - live) / live:+.1%})")
+        if missing:
+            issues.append(f"{commodity}: no CBOT price for {', '.join(missing)}")
+        if stale:
+            issues.append(f"{commodity}: not the current market ({'; '.join(stale)})")
+    return issues
+
+
 def render_inputs_tab(as_of):
     with st.expander("📋 Paste daily tables (CIF & Barge Freight)"):
         pr = st.session_state.pop("paste_result", None)
@@ -3731,6 +3792,7 @@ def render_inputs_tab(as_of):
                 ("ok", f"✓ Filled {n} live CBOT values ({', '.join(done)}). "
                        "Review and Save to archive."))
             if not err:
+                st.session_state.pop("save_futures_issues", None)
                 _bump_editors()
             st.rerun()
 
@@ -3811,10 +3873,33 @@ def render_inputs_tab(as_of):
         _ok = st.checkbox("Save anyway — I've reviewed it")
     else:
         _ok = True
+    # A Save whose futures look wrong stops here first (see _futures_issues).
+    pending = st.session_state.get("save_futures_issues")
+    if pending:
+        st.warning("**Not saved yet: the CBOT futures don't look right.**\n\n"
+                   + "\n".join(f"- {p}" for p in pending)
+                   + "\n\nUse **🔄 Pull live CBOT futures (Massive)** above, then "
+                     "Save. Or save as-is if these are the prices you mean to archive.")
+        w1, w2, _w3 = st.columns([1, 1, 2])
+        with w1:
+            if st.button("Save anyway", use_container_width=True, disabled=not _ok):
+                st.session_state.pop("save_futures_issues", None)
+                save_current(as_of)
+                st.session_state["_saved_ver"] = st.session_state.get("_saved_ver", 0) + 1
+                st.rerun()
+        with w2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.pop("save_futures_issues", None)
+                st.rerun()
     s1, s2 = st.columns([1, 3])
     with s1:
         if st.button(f"💾 Save to archive", type="primary",
                      use_container_width=True, disabled=not _ok):
+            with st.spinner("Checking the CBOT futures against the live board…"):
+                issues = _futures_issues(as_of)
+            if issues:
+                st.session_state["save_futures_issues"] = issues
+                st.rerun()
             n_cif, n_frt = save_current(as_of)
             # Bump so the "identical to the prior day" check re-reads the archive
             # (which now includes what we just saved) instead of a cached view.
