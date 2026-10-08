@@ -104,7 +104,7 @@ Scheduled jobs for this portal now (as of 2026-10-04):
 | Job | Where | When (CT) |
 |---|---|---|
 | FOB Vessel pull (`deploy/run_vessel.sh`) | Droplet cron | 4:00 PM weekdays |
-| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | every 10 min, 3:30–7:00 PM weekdays |
+| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | every 10 min, 3:00–7:00 PM weekdays (was 3:30 until 2026-10-07) |
 | Bid Sheet freshness alert (`deploy/run_bidsheet_check.sh`) | Droplet cron | 5:00 PM weekdays |
 
 The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
@@ -151,8 +151,22 @@ The 📝 paste and the email import both call `db.save_snapshot`, which
 **replaces** the date's rows rather than appending them. Re-saving a day never
 duplicates it, whichever path saves first. The import also **skips a date that's
 already archived** (`--force` overrides). So a day you paste first is never
-overwritten by the 4:30/6:30 import, while a paste after the import replaces it,
-which is how you correct a day.
+overwritten by the import, while a paste after the import replaces it, which is
+how you correct a day.
+
+**When the sheet arrives, and why the import starts at 3:00 PM (2026-10-07).**
+Doug's email ("FW: <Weekday>, MM-DD-YYYY", attachment `MMDDYY.xlsx`) arrived at
+2:09-5:51 PM over 10/01-10/07, mostly ~2:10-2:30. The day was being saved by hand
+at ~3:10, just before the import's first 3:30 check, so the import skipped it
+every time. That made it look like the email values never flowed in. Kolten moved
+the start to 3:00.
+
+The task's StartBoundary carries no UTC offset, on purpose. With an offset (it
+used to read `-05:00`), Task Scheduler pins the trigger to UTC, and the checks
+would shift an hour earlier when daylight saving ends.
+
+Outlook times read through pywin32 are local time labeled `+00:00`. Do not
+convert them from UTC (that misreading once put these emails at 9 AM).
 
 **On Snowflake, "replaces" took more than DELETE-then-INSERT (fixed 2026-10-04).**
 The connector autocommits every statement, and Snowflake does **not** enforce

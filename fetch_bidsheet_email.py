@@ -9,8 +9,9 @@ This is the desktop stop-gap (no IT needed). The droplet/Graph version will
 replace it once Graph `Mail.Read` is granted (see deploy/IT_REQUEST_mail_read.md);
 both front-ends call the same `bidsheet.save_bidsheet()`.
 
-Windows Task `RiverFobBidSheetImport` runs it every 10 minutes, 3:30-7:00 PM CT on
-weekdays (Doug sends ~4pm), so a sheet is archived within ~10 min of arriving:
+Windows Task `RiverFobBidSheetImport` runs it every 10 minutes, 3:00-7:00 PM CT on
+weekdays (Doug's sheet lands in the afternoon: 2:09-5:51 PM over 10/01-10/07), so a
+sheet is archived within ~10 min of arriving, or at 3:00 if it came earlier:
     C:\\Python314\\python.exe "<repo>\\fetch_bidsheet_email.py"
 Most polls exit early on a local note of the last sheet handled (LAST_DONE).
 Needs: pywin32 (Outlook COM), the repo .env (USE_SNOWFLAKE + SNOWFLAKE_*).
