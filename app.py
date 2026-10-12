@@ -107,12 +107,12 @@ except TypeError:  # older Streamlit without st.html JS support
     _stc.html(_BADGE_JS, height=0)
 
 
-# Tablet and phone widths (up to 1000px): the open sidebar takes ~300px, leaving ~520px of
-# an iPad held upright for the tables. Collapse it once per browser session; the arrow at
-# the top-left brings it back, and it is not collapsed again after that. Wider screens
-# are untouched.
+# Tablet widths (up to 1200px, an iPad held either way): the open sidebar takes ~300px, which
+# leaves ~520px upright and ~700px sideways, so the Net Carry ladder (700px wide) loses its
+# last columns. Collapse it once per browser session; the arrow at the top-left brings it
+# back and it is not collapsed again after that. Wider screens are untouched.
 _SIDEBAR_JS = """<script>(function(){try{
-if(window.innerWidth>1000)return;
+if(window.innerWidth>1200)return;
 var key='rfob_sidebar_auto_collapsed';
 if(sessionStorage.getItem(key))return;
 var tries=0;var t=setInterval(function(){
