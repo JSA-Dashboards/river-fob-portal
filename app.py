@@ -4342,96 +4342,123 @@ if VIEW_ONLY:
     else:
         tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
                        + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                          "🚢 FOB Vessel", "⚓ Barge Data"])
+                          "🚢 FOB Vessel", "⚓ Barge Data"], on_change="rerun")
         with tabs[0]:
-            render_changes_tab(view_date, cur=(hist_cif, hist_frt),
-                               allow_download=False)
+            if tabs[0].open:
+                render_changes_tab(view_date, cur=(hist_cif, hist_frt),
+                                   allow_download=False)
         for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
             with tab:
-                _render_archived_commodity(commodity)
+                if tab.open:
+                    _render_archived_commodity(commodity)
         with tabs[1 + len(M.COMMODITIES)]:          # 💵 Net Carry sits right after the commodity sheets
-            render_netcarry_tab()
+            if tabs[1 + len(M.COMMODITIES)].open:
+                render_netcarry_tab()
         with tabs[-5]:
-            render_seasonal_tab()
+            if tabs[-5].open:
+                render_seasonal_tab()
         with tabs[-4]:
-            render_cashdel_tab()
+            if tabs[-4].open:
+                render_cashdel_tab()
         with tabs[-3]:
-            render_riverbids_tab()
+            if tabs[-3].open:
+                render_riverbids_tab()
         with tabs[-2]:
-            render_fob_vessel_tab()
+            if tabs[-2].open:
+                render_fob_vessel_tab()
         with tabs[-1]:
-            render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt),
-                                       allow_download=False)
+            if tabs[-1].open:
+                render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt),
+                                           allow_download=False)
 elif HIST_DATE:
     tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
                    + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"])
+                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"], on_change="rerun")
     with tabs[0]:
-        render_changes_tab(view_date, cur=(hist_cif, hist_frt))
+        if tabs[0].open:
+            render_changes_tab(view_date, cur=(hist_cif, hist_frt))
     with tabs[1 + len(M.COMMODITIES)]:              # 💵 Net Carry sits right after the commodity sheets
-        render_netcarry_tab()
+        if tabs[1 + len(M.COMMODITIES)].open:
+            render_netcarry_tab()
     with tabs[-6]:
-        render_seasonal_tab()
+        if tabs[-6].open:
+            render_seasonal_tab()
     with tabs[-5]:
-        render_cashdel_tab()
+        if tabs[-5].open:
+            render_cashdel_tab()
     with tabs[-4]:
-        render_riverbids_tab()
+        if tabs[-4].open:
+            render_riverbids_tab()
     with tabs[-3]:
-        render_fob_vessel_tab()
+        if tabs[-3].open:
+            render_fob_vessel_tab()
     with tabs[-2]:
-        render_export_tab()
+        if tabs[-2].open:
+            render_export_tab()
     with tabs[-1]:
-        render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt))
+        if tabs[-1].open:
+            render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt))
     for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
         with tab:
-            _render_archived_commodity(commodity)
+            if tab.open:
+                _render_archived_commodity(commodity)
 else:
     tabs = st.tabs(["📊 Changes", "📝 Inputs"] + M.COMMODITIES
                    + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"])
+                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"], on_change="rerun")
     with tabs[0]:
-        render_changes_tab(as_of)
+        if tabs[0].open:
+            render_changes_tab(as_of)
     with tabs[1]:
-        render_inputs_tab(as_of)
+        if tabs[1].open:
+            render_inputs_tab(as_of)
     with tabs[2 + len(M.COMMODITIES)]:              # 💵 Net Carry sits right after the commodity sheets
-        render_netcarry_tab()
+        if tabs[2 + len(M.COMMODITIES)].open:
+            render_netcarry_tab()
     with tabs[-6]:
-        render_seasonal_tab()
+        if tabs[-6].open:
+            render_seasonal_tab()
     with tabs[-5]:
-        render_cashdel_tab()
+        if tabs[-5].open:
+            render_cashdel_tab()
     with tabs[-4]:
-        render_riverbids_tab()
+        if tabs[-4].open:
+            render_riverbids_tab()
     with tabs[-3]:
-        render_fob_vessel_tab()
+        if tabs[-3].open:
+            render_fob_vessel_tab()
     with tabs[-2]:
-        render_export_tab()
+        if tabs[-2].open:
+            render_export_tab()
     with tabs[-1]:
-        render_barge_dashboard_tab(as_of)
+        if tabs[-1].open:
+            render_barge_dashboard_tab(as_of)
     for tab, commodity in zip(tabs[2:2 + len(M.COMMODITIES)], M.COMMODITIES):
         with tab:
-            df = st.session_state[f"cif_{commodity}"]
-            cif_row = {m: df.loc[m, "CIF"] for m in M.MONTHS}
-            fut_row = {m: df.loc[m, "Futures"] for m in M.MONTHS}
-            fbr = {r: {m: st.session_state.freight.loc[r, m] for m in M.MONTHS}
-                   for r in M.FREIGHT_REGIONS}
-            spreads = _live_spreads(commodity)   # derived from the CBOT futures
-            fullcarry = M.compute_full_carry(
-                commodity, fut_row,
-                st.session_state.interest_pct / 100.0,
-                st.session_state[f"storage_{commodity}"],
-            )
-            cashc = st.session_state[f"cashc_{commodity}"]
-            prior = load_prior(commodity, as_of.isoformat(), cashc)
-            st.markdown(f'<div id="snap_fob_{commodity}">'
-                        + render_block(commodity, as_of, cif_row, fut_row, fbr,
-                                       spreads, fullcarry, cashc, prior=prior,
-                                       contracts=st.session_state.get(f"contracts_{commodity}"))
-                        + '</div>', unsafe_allow_html=True)
-            _snap_toolbar(f"snap_fob_{commodity}",
-                          f"{commodity} FOB Sheet {as_of:%m-%d-%y}")
-            st.markdown("##### 📈 Top of Carry")
-            render_carry_chart(commodity, M.compute_fob_grid(commodity, cif_row, fbr),
-                               spreads, as_of=as_of, fut_row=fut_row)
+            if tab.open:
+                df = st.session_state[f"cif_{commodity}"]
+                cif_row = {m: df.loc[m, "CIF"] for m in M.MONTHS}
+                fut_row = {m: df.loc[m, "Futures"] for m in M.MONTHS}
+                fbr = {r: {m: st.session_state.freight.loc[r, m] for m in M.MONTHS}
+                       for r in M.FREIGHT_REGIONS}
+                spreads = _live_spreads(commodity)   # derived from the CBOT futures
+                fullcarry = M.compute_full_carry(
+                    commodity, fut_row,
+                    st.session_state.interest_pct / 100.0,
+                    st.session_state[f"storage_{commodity}"],
+                )
+                cashc = st.session_state[f"cashc_{commodity}"]
+                prior = load_prior(commodity, as_of.isoformat(), cashc)
+                st.markdown(f'<div id="snap_fob_{commodity}">'
+                            + render_block(commodity, as_of, cif_row, fut_row, fbr,
+                                           spreads, fullcarry, cashc, prior=prior,
+                                           contracts=st.session_state.get(f"contracts_{commodity}"))
+                            + '</div>', unsafe_allow_html=True)
+                _snap_toolbar(f"snap_fob_{commodity}",
+                              f"{commodity} FOB Sheet {as_of:%m-%d-%y}")
+                st.markdown("##### 📈 Top of Carry")
+                render_carry_chart(commodity, M.compute_fob_grid(commodity, cif_row, fbr),
+                                   spreads, as_of=as_of, fut_row=fut_row)
 
 st.caption("Mirrors JSA FOB Sheet · FOB = CIF − (tariff factor × freight%) ÷ 2000 × bushel weight")
 
