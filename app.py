@@ -107,6 +107,26 @@ except TypeError:  # older Streamlit without st.html JS support
     _stc.html(_BADGE_JS, height=0)
 
 
+# Tablet and phone widths (up to 1000px): the open sidebar takes ~300px, leaving ~520px of
+# an iPad held upright for the tables. Collapse it once per browser session; the arrow at
+# the top-left brings it back, and it is not collapsed again after that. Wider screens
+# are untouched.
+_SIDEBAR_JS = """<script>(function(){try{
+if(window.innerWidth>1000)return;
+var key='rfob_sidebar_auto_collapsed';
+if(sessionStorage.getItem(key))return;
+var tries=0;var t=setInterval(function(){
+var b=document.querySelector('[data-testid="stSidebarCollapseButton"] button');
+var sb=document.querySelector('[data-testid="stSidebar"]');
+if(b&&sb&&sb.getAttribute('aria-expanded')==='true'){b.click();sessionStorage.setItem(key,'1');clearInterval(t);}
+else if(++tries>24){clearInterval(t);}
+},250);}catch(e){}})();</script>"""
+try:
+    st.html(_SIDEBAR_JS, unsafe_allow_javascript=True)
+except TypeError:
+    pass
+
+
 @st.cache_resource
 def _ensure_db():
     # Allow DATABASE_URL via Streamlit secrets (falls back to local SQLite).
@@ -209,6 +229,13 @@ st.markdown(
       }}
       .dash-header-text .subtitle {{
         color: #6b7280; font-size: 0.85rem; margin: 3px 0 0 0;
+      }}
+
+      /* Tablet and phone (up to 1000px): the 180px spacer that centres the title squeezes
+         it to a few letters per line beside the logo, so drop it. */
+      @media (max-width: 1000px) {{
+        .dash-header .dash-header-spacer {{ display: none; }}
+        .dash-header {{ gap: 12px; }}
       }}
 
       /* Page title styling */
@@ -561,7 +588,7 @@ st.markdown(
     f'    <div class="subtitle">Commodity &amp; Ag Risk Management Specialists '
     f'&nbsp;·&nbsp; est. 1976</div>'
     f'  </div>'
-    f'  <div style="width:180px"></div>'  # spacer to keep the title centred
+    f'  <div class="dash-header-spacer" style="width:180px"></div>'  # spacer to keep the title centred
     f'</div>',
     unsafe_allow_html=True,
 )
