@@ -143,6 +143,12 @@ def _live_futures_spreads(cal, as_of, tries=3):
             break
         if attempt < tries - 1:
             time.sleep(2)
+    return fut, _spreads_for(cal, fut)
+
+
+def _spreads_for(cal, fut):
+    """Inter-contract spreads implied by a CBOT board, per commodity, in the
+    calendar's own contract order. The carry charts need them stored."""
     spr = {}
     for c in M.COMMODITIES:
         cons = [ct for _m, ct in cal.get(c, [])]
@@ -153,27 +159,107 @@ def _live_futures_spreads(cal, as_of, tries=3):
             spr[c] = list(zip(labels, vals))
         except Exception:
             pass
-    return fut, spr
+    return spr
+
+
+# CBOT root per FOB commodity, and month letter -> calendar month, for naming a
+# sheet's contracts (e.g. ZCZ26; Massive's ticker for it is ZCZ6).
+_ROOT = {"Corn": "ZC", "Soybeans": "ZS", "Wheat": "ZW"}
+_LETTER_MONTH = {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
+                 "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12}
+
+
+def close_symbol(commodity, code, as_of):
+    """The sheet's contract code ('CZ', 'SF', ...) -> the CBOT contract it meant on
+    `as_of`: the first one with that month letter on or after the as-of month, the
+    same front-with-that-letter rule the live Massive pull follows.
+    ('Corn', 'CZ', 2026-10-09) -> 'ZCZ26'; ('Corn', 'CH', 2026-10-09) -> 'ZCH27'."""
+    letter = str(code)[-1].upper()
+    year = as_of.year if _LETTER_MONTH[letter] >= as_of.month else as_of.year + 1
+    return f"{_ROOT[commodity]}{letter}{year % 100:02d}"
+
+
+def futures_from_closes(cal, closes, as_of):
+    """calendar + {contract: $/bu} -> {commodity: {month: $/bu}}. A contract with
+    no close is left out, so the completeness check catches it. Pure."""
+    out = {}
+    for com, pairs in (cal or {}).items():
+        if com not in _ROOT:
+            continue
+        row = {}
+        for month, code in pairs:
+            if code:
+                price = closes.get(close_symbol(com, code, as_of))
+                if price is not None:
+                    row[month] = price
+        if row:
+            out[com] = row
+    return out
+
+
+def _closing_board(as_of, symbols):
+    """{contract: $/bu} at `as_of`'s own settlement, from Massive's daily session
+    bars (/aggs/<ticker>, resolution 1session, matched on session_end_date). The
+    live snapshot can't give a past day.
+
+    NOT the basis tracker's FUTURES_PRICES. Checked 2026-10-12: its daily
+    captures for date D hold the settlement of the trading day BEFORE D (7 of 7
+    days, corn/soy/wheat). Reading it put 10/06, 10/07 and 10/09 a day off,
+    until they were re-saved from these bars. Days saved from a live Massive pull
+    agree with these bars to ~1¢.
+
+    Returns {} for anything Massive can't supply; the completeness check then
+    refuses the save, and the next run retries."""
+    try:
+        import os
+        import massive_api as MA
+        key = os.environ.get("MASSIVE_API_KEY", "").strip()
+        if not key or not symbols:
+            return {}
+        tickers = {s: s[:3] + s[-1] for s in symbols}          # ZCZ26 -> ZCZ6
+        bars = MA.get_daily_bars_many(sorted(set(tickers.values())), key)
+    except Exception:
+        return {}
+    out = {}
+    for sym, ticker in tickers.items():
+        df = bars.get(ticker)
+        if df is not None and as_of in df.index:
+            out[sym] = round(float(df.loc[as_of, "settle"]) / 100.0, 4)
+    return out
 
 
 class FuturesUnavailable(RuntimeError):
-    """Raised when the CBOT board didn't pull from Massive, so committing would
-    save a carry-less day. The caller can retry later or override."""
+    """Raised when the CBOT board couldn't be had (Massive down, or no close
+    captured for a past day), so committing would save a carry-less day. The
+    caller can retry later or override."""
 
 
-def save_bidsheet(path, as_of=None, commit=False, require_futures=True):
+def save_bidsheet(path, as_of=None, commit=False, require_futures=True, futures="live"):
     """Parse the Bid Sheet at `path` and (if commit) upsert it into the archive.
     Pass `as_of` (from the attachment filename / email date) — A1 is unreliable.
-    Also pulls the live CBOT board + spreads from Massive so the carry charts work.
+    Also stores the CBOT board + spreads so the carry charts work.
 
-    `require_futures` (default True): refuse to commit unless Massive returned a
-    front-month price for every commodity — so a Massive blip can't silently
-    upload a day with no carry/net data. Pass False to force a CIF+freight-only
-    save. Returns a summary dict (`futures_complete` says whether the board is
-    whole). Idempotent: save_snapshot replaces the date's rows."""
+    `futures`: "live" (default) pulls the current board from Massive, which is
+    right for today's sheet between the 1:20 PM close and the 7 PM reopen.
+    "close" takes `as_of`'s own settlement from Massive's daily session bars
+    instead: the right source for a PAST day, or for today after the reopen. The
+    import uses it when it catches up a missed day or runs late.
+
+    `require_futures` (default True): refuse to commit unless every commodity has
+    a front-month price, so a Massive blip can't silently upload a day with no
+    carry/net data. Pass False to force a CIF+freight-only save. Returns a
+    summary dict (`futures_complete` says whether the board is whole).
+    Idempotent: save_snapshot replaces the date's rows."""
     as_of, cif, freight, contracts = parse_bidsheet(path, as_of=as_of)
     cif2, frt2, cal = build_payload(as_of, cif, freight, contracts)
-    fut, spr = _live_futures_spreads(cal, as_of)
+    if futures == "close":
+        symbols = {close_symbol(com, code, as_of)
+                   for com, pairs in cal.items() if com in _ROOT
+                   for _m, code in pairs if code}
+        fut = futures_from_closes(cal, _closing_board(as_of, symbols), as_of)
+        spr = _spreads_for(cal, fut)
+    else:
+        fut, spr = _live_futures_spreads(cal, as_of)
     months = M.months_for(as_of)
     complete = _futures_complete(fut, months[0] if months else None)
     was_present = as_of.isoformat() in {str(d)[:10] for d in db.list_dates()}
@@ -181,16 +267,18 @@ def save_bidsheet(path, as_of=None, commit=False, require_futures=True):
                n_cif=sum(len(v) for v in cif2.values()),
                n_frt=sum(len(v) for v in frt2.values()),
                n_fut=sum(len(v) for v in fut.values()),
-               futures_complete=complete)
+               futures_complete=complete, futures_source=futures)
     if commit:
         if db._backend() == "sqlite":
             raise RuntimeError("Refusing to write to the SQLite fallback — set "
                                "USE_SNOWFLAKE + SNOWFLAKE_* (or DATABASE_URL).")
         if require_futures and not complete:
+            source = ("Massive's live board" if futures != "close"
+                      else "Massive's daily settlements")
             raise FuturesUnavailable(
-                f"CBOT board did not pull from Massive for {as_of} "
+                f"CBOT board did not come from {source} for {as_of} "
                 f"(commodities with futures: {sorted(c for c in fut if fut[c])}). "
-                "Refusing to upload a carry-less day — re-run when Massive is up, "
+                "Refusing to upload a carry-less day; the next run retries, "
                 "or save with require_futures=False.")
         db.save_snapshot(as_of.isoformat(), cif2, frt2, cal, futures=fut, spreads=spr)
         out["committed"] = True

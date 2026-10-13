@@ -6,6 +6,7 @@ key; prices come back in the CBOT quote convention (cents/bu for grains).
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
 import pandas as pd
@@ -120,6 +121,53 @@ def get_futures_curve(product_code: str, api_key: str, as_of: date, n_contracts:
 
 
 FED_FUNDS_PRODUCT = "ZQ"
+
+
+BAR_COLUMNS = ["open", "high", "low", "close", "settle", "volume"]
+
+
+def get_daily_bars(ticker: str, api_key: str) -> pd.DataFrame:
+    """Full daily OHLC + settlement + volume history for one contract, indexed by
+    trading date (ascending). 'settle' falls back to the session close when
+    settlement is missing or zero — the current session's bar carries
+    settlement_price 0 until it settles.
+
+    Same as grain-seasonal-dashboard's massive_api.get_daily_bars. River FOB uses it
+    to price a PAST day's Bid Sheet at that day's own settlement (bidsheet's
+    "close" futures), which the live snapshots can't give."""
+    data = _get(f"/aggs/{ticker}", api_key, params={"resolution": "1session", "limit": 50000})
+    rows = []
+    for bar in data.get("results", []):
+        day = bar.get("session_end_date")
+        o, h, l, c = bar.get("open"), bar.get("high"), bar.get("low"), bar.get("close")
+        settle = bar.get("settlement_price") or c
+        if not day or not settle or o is None or h is None or l is None or c is None:
+            continue
+        rows.append({
+            "date": pd.to_datetime(day).date(),
+            "open": float(o), "high": float(h), "low": float(l), "close": float(c),
+            "settle": float(settle), "volume": bar.get("volume"),
+        })
+    if not rows:
+        return pd.DataFrame(columns=BAR_COLUMNS)
+    return pd.DataFrame(rows).set_index("date").sort_index()
+
+
+def get_daily_bars_many(tickers: list[str], api_key: str, max_workers: int = 8) -> dict[str, pd.DataFrame]:
+    """Daily bars for several contracts at once, fetched in parallel (each call is
+    a ~5s round trip). A contract that fails comes back as an empty frame."""
+    out: dict[str, pd.DataFrame] = {}
+    if not tickers:
+        return out
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(tickers))) as pool:
+        futures = {pool.submit(get_daily_bars, t, api_key): t for t in tickers}
+        for fut in as_completed(futures):
+            ticker = futures[fut]
+            try:
+                out[ticker] = fut.result()
+            except (MassiveApiError, requests.RequestException):
+                out[ticker] = pd.DataFrame(columns=BAR_COLUMNS)
+    return out
 
 
 def get_fed_funds_rate(api_key: str, as_of: date) -> dict:

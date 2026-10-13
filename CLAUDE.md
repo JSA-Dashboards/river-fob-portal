@@ -104,7 +104,7 @@ Scheduled jobs for this portal now (as of 2026-10-04):
 | Job | Where | When (CT) |
 |---|---|---|
 | FOB Vessel pull (`deploy/run_vessel.sh`) | Droplet cron | 4:00 PM weekdays |
-| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | every 10 min, 3:00–7:00 PM weekdays (was 3:30 until 2026-10-07) |
+| Bid Sheet email import (`fetch_bidsheet_email.py`) | Desktop task `RiverFobBidSheetImport` | every 10 min, 3:00–7:00 PM weekdays (was 3:30 until 2026-10-07), plus at sign-in and unlock to catch up; runs on battery |
 | Bid Sheet freshness alert (`deploy/run_bidsheet_check.sh`) | Droplet cron | 5:00 PM weekdays |
 
 The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
@@ -120,6 +120,59 @@ duplicate a day (see "Two writers, no duplicates" below). Two front-ends call th
 `bidsheet.save_bidsheet()`: `fetch_bidsheet_email.py` (desktop Outlook COM,
 Windows Task `RiverFobBidSheetImport`, live) and `fetch_bidsheet_graph.py`
 (droplet Microsoft Graph, pending IT granting `Mail.Read` on app `19283e00`).
+
+### Catch-up and the log (2026-10-12)
+
+On Fri 10/09 every desktop run crashed before saving. Snowflake shows no
+connection from the PC that afternoon, so it failed at the classic-Outlook
+step, and there was no log to say why. By Monday the sheet was past the 120
+newest mails the importer used to scan, so the day stayed missing until it was
+loaded by hand. The 5 PM alert did fire. So now:
+
+- **The log.** Every run appends to `logs/bidsheet_import.log` (rotated, gitignored).
+  - A crash's full traceback goes there too.
+  - Exit codes: **0** = done or nothing to do; **1** = crash; **2** = a day's save
+    was refused for lack of futures, and the next run retries.
+  - Fetching the inbox retries Outlook 3 times, 20s apart.
+- **The catch-up.** Each run takes every Bid Sheet received since the day after
+  the last one handled (`LAST_DONE` in %TEMP%), going back at most `CATCHUP_DAYS`
+  (10). It saves the days not yet archived, oldest first.
+  - **Today's** sheet takes the live Massive board. Between the 1:20 close and
+    the 7 PM reopen, that's the close.
+  - **A past day's sheet, or today's after 7 PM,** takes that day's settlement
+    from Massive's daily session bars (`massive_api.get_daily_bars`, matched on
+    `session_end_date`), via `save_bidsheet(futures="close")`. The live snapshot
+    can't give a past day.
+  - **Never `JSA.BASIS_TRACKER.FUTURES_PRICES`.** Checked 2026-10-12: its daily
+    captures for date D hold the settlement of the trading day BEFORE D (7 of 7
+    days, corn/soy/wheat).
+    - My 10/06, 10/07 and 10/09 repairs used it and were a day off. They were
+      re-saved from the Massive bars.
+    - Every day saved from a live Massive pull agrees with the bars to ~1¢
+      (9/28–10/08 audited).
+  - A day already archived (pasted by hand) is skipped.
+  - `LAST_DONE` only moves forward, and never past a failed day, so that day is
+    retried. A poll with no new sheet still exits without querying Snowflake.
+- **Flags:**
+  - `--dry-run`: find, parse and price; save nothing.
+  - `--since YYYY-MM-DD`: look back to a date.
+  - `--force`: re-save the newest sheet even if archived. It never sweeps past days.
+- **When it runs (the desktop task).** Every 10 min 3:00–7:00 PM weekdays, **plus
+  at sign-in and on unlock**, and it's allowed on battery (2026-10-12).
+  - On Mon 10/12 the laptop ran down on battery from ~2 PM and was off until 8:31
+    PM, so all 24 afternoon runs were "missed". Doug's 5:11 PM sheet was never
+    looked for.
+  - The task had also been set not to start on battery.
+  - A run at sign-in/unlock catches up whatever the afternoon missed, with the
+    right settlement.
+- **Columbus Day / Veterans Day.** The basis tracker's afternoon job skips US
+  federal holidays, and on 10/12 it skipped everything, including its futures
+  capture. But CBOT grains trade on both days, and Doug sends a sheet. The 5 PM
+  alert's own `HOLIDAYS` list correctly counts both as working days.
+- **Tests:** `python tests/test_bidsheet_catchup.py` (pure: fake inbox and archive).
+- **Manual check from Snowflake when a run fails:** join ACCOUNT_USAGE
+  LOGIN_HISTORY → SESSIONS (`client_environment ILIKE '%Windows%'`) →
+  QUERY_HISTORY for the `.env` user. No sessions means it died before Snowflake.
 
 Two parsing traps, both load-bearing:
 
@@ -225,9 +278,10 @@ On 10/06 a paste on the admin portal's old copy of this page archived the Bid
 Sheet's cached Eikon futures: 12-14% under the market, and only 4 of 8 months.
 Because that paste saved first, the email import skipped the day by design.
 
-- **Fix:** the day was re-saved with the basis tracker's 10/06 settlements
-  (`JSA.BASIS_TRACKER.FUTURES_PRICES`, captured ~3:54 PM CT). That table is the
-  way to repair a past day's futures; Massive only has live prices.
+- **Fix:** the day's futures were re-saved, first from the basis tracker's
+  `FUTURES_PRICES`, which turned out to be a day off. On 2026-10-12 they were
+  re-saved again from Massive's daily session bars for 10/06. Repair a past day's
+  futures from those bars, never from FUTURES_PRICES (see "Catch-up and the log").
 - **The admin portal tile now opens this app** instead of its own copy.
 - **Save check:** **💾 Save to archive** runs `_futures_issues()` on click. It
   never runs on render, so the page never waits on Massive. It flags:
