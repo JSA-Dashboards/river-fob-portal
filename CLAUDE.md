@@ -406,6 +406,11 @@ drives it and the comparison; the section also shows when the selected sheet has
   measures the crop year being tracked (the as-of sheet's): the shipment table, and the history when that year has weekly bids; a
   what-if box applies it to every year. Vendored — see the tracker's `CLAUDE.md`. The call passes `scope=f"river|{loc}"` so a number typed
   for one location never follows the user to another (the widget keys carry it); keep passing it.
+- **Ship by (2026-10-12; Kolten: "limit how late the study goes ... a ground pile that at the latest has to ship by March ... default to best
+  with no limits"):** the block's **Ship by** box — No limit (default) or the end of a month, November to June (soybeans to August) — stops the
+  study there: the best return, the by-year table, both charts and the shipment table read only the weeks / months up to it. Vendored — see
+  the tracker's `CLAUDE.md`; the call needs no new argument, and the choice (`nc_rtc_ship_by_corn` / `_soy`) follows the user from location to
+  location.
 - **Checks:** `python tests/test_river_carry.py` (the archive -> inputs, pure), `tests/test_return_to_carry*.py` (vendored; the
   `_block` one drives the block headless with AppTest) and the futures-history tests in `tests/test_net_carry_data.py`.
 
