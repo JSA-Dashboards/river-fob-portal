@@ -428,6 +428,15 @@ drives it and the comparison; the section also shows when the selected sheet has
   study there: the best return, the by-year table, both charts and the shipment table read only the weeks / months up to it. Vendored — see
   the tracker's `CLAUDE.md`; the call needs no new argument, and the choice (`nc_rtc_ship_by_corn` / `_soy`) follows the user from location to
   location.
+- **Harvest window (2026-10-12; Kolten: "we default to establishing corn basis as of Oct and for 7 weeks ... yes, add start week and number of
+  weeks"; "... months that start in September some will have this month basis the CU ... roll this accordingly. Use the last day prior to first
+  notice day to establish the spread level"; "Greenville is an example on river fob"):** the block's **Start week** / **Number of weeks** boxes choose
+  which weekly bids the calculated harvest basis averages (week 1 = the first Wednesday of October, week 0 and back = the September Wednesdays; the
+  default 1 and 7 is the report's window); the same weeks in every crop year, interest still from the report's third (soybean fifth) weekly bid. The
+  sheet whose first column is Sep tags that September's first sheet(s) U for every location (2008, 2009 x2, 2013, 2021, 2026), so a September-start
+  window moves those bids to Dec at the Dec - Sep spread of the last trading day before the September contract's first notice day (`rtc.sept_roll_day`
+  / `sept_to_dec_spread`; a bid already quoted off Dec is left alone, an unmeasurable spread leaves the bid out). Vendored — see the tracker's
+  `CLAUDE.md`; the call needs no new argument, and the choice (`nc_rtc_win_corn_*` / `_soy_*`) follows the user from location to location.
 - **Checks:** `python tests/test_river_carry.py` (the archive -> inputs, pure), `tests/test_return_to_carry*.py` (vendored; the
   `_block` one drives the block headless with AppTest) and the futures-history tests in `tests/test_net_carry_data.py`.
 
