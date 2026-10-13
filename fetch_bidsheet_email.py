@@ -24,7 +24,8 @@ CATCHUP_DAYS, and saves the days that aren't archived yet, oldest first:
     and the 7 PM reopen, that's the close);
   - a past day's sheet, or today's after 7 PM, takes THAT day's settlement from
     Massive's daily session bars. The live board can't give it. The basis
-    tracker's FUTURES_PRICES is a day off, so it isn't used (bidsheet._closing_board).
+    tracker's FUTURES_PRICES isn't used: it was a day off until its 2026-10-12
+    fix, and its row for today can still be a provisional close (bidsheet._closing_board).
 A day already archived (e.g. pasted by hand) is never overwritten unless --force.
 LAST_DONE only moves past a day once it's handled, so a failed day is retried.
 Most polls still exit early: once today is handled, or when no new sheet has come

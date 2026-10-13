@@ -202,11 +202,13 @@ def _closing_board(as_of, symbols):
     bars (/aggs/<ticker>, resolution 1session, matched on session_end_date). The
     live snapshot can't give a past day.
 
-    NOT the basis tracker's FUTURES_PRICES. Checked 2026-10-12: its daily
-    captures for date D hold the settlement of the trading day BEFORE D (7 of 7
-    days, corn/soy/wheat). Reading it put 10/06, 10/07 and 10/09 a day off,
-    until they were re-saved from these bars. Days saved from a live Massive pull
-    agree with these bars to ~1¢.
+    Not the basis tracker's FUTURES_PRICES. Until 2026-10-12 its daily captures
+    for date D held the settlement of the trading day BEFORE D; reading it put
+    10/06, 10/07 and 10/09 a day off, until they were re-saved from these bars.
+    The tracker fixed its capture and rebuilt those rows that night, so the table
+    is right by date now, but these bars don't depend on its 3:45 PM run, and its
+    row for today can be the session's close until its next run. Days saved from
+    a live Massive pull agree with these bars to ~1¢.
 
     Returns {} for anything Massive can't supply; the completeness check then
     refuses the save, and the next run retries."""
