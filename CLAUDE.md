@@ -143,11 +143,20 @@ loaded by hand. The 5 PM alert did fire. So now:
     from Massive's daily session bars (`massive_api.get_daily_bars`, matched on
     `session_end_date`), via `save_bidsheet(futures="close")`. The live snapshot
     can't give a past day.
-  - **Never `JSA.BASIS_TRACKER.FUTURES_PRICES`.** Checked 2026-10-12: its daily
-    captures for date D hold the settlement of the trading day BEFORE D (7 of 7
-    days, corn/soy/wheat).
+  - **The bars, not `JSA.BASIS_TRACKER.FUTURES_PRICES`.**
+    - Until 2026-10-12, that table's daily captures for date D held the
+      settlement of the trading day BEFORE D. The tracker's 3:45 PM run stored
+      Massive's newest flat file, which isn't published until ~9 PM.
     - My 10/06, 10/07 and 10/09 repairs used it and were a day off. They were
       re-saved from the Massive bars.
+    - **Fixed the same night in the basis tracker.** Its capture
+      (`futures_capture.py`) files each bar under its own date from 10/13, and
+      `repair_futures_dating.py` rebuilt 06-22..10-12 from the bars. The re-audit
+      found 0 late rows, and the backfill (2021-10 on) was always right. So the
+      table is right by date now.
+    - The import still prices from the bars. They don't depend on the tracker's
+      3:45 PM run, and the tracker's row for today can be the session's close
+      (`captured_at` `massive:close@`) until its next run swaps in the settlement.
     - Every day saved from a live Massive pull agrees with the bars to ~1¢
       (9/28–10/08 audited).
   - A day already archived (pasted by hand) is skipped.
@@ -165,10 +174,16 @@ loaded by hand. The 5 PM alert did fire. So now:
   - The task had also been set not to start on battery.
   - A run at sign-in/unlock catches up whatever the afternoon missed, with the
     right settlement.
-- **Columbus Day / Veterans Day.** The basis tracker's afternoon job skips US
-  federal holidays, and on 10/12 it skipped everything, including its futures
-  capture. But CBOT grains trade on both days, and Doug sends a sheet. The 5 PM
-  alert's own `HOLIDAYS` list correctly counts both as working days.
+- **Columbus Day / Veterans Day.** CBOT grains trade on both days, and Doug
+  sends a sheet. The 5 PM alert's own `HOLIDAYS` list correctly counts both as
+  working days.
+  - The basis tracker's afternoon job used to skip US federal holidays. On 10/12
+    it skipped everything, including its futures capture.
+  - From 10/13 it uses CME's grain calendar (`grain_calendar.py` there), so it
+    runs on both days.
+  - 10/12's futures were filled by the repair. That day's bid scrape is lost.
+  - `grain_calendar` agrees with `HOLIDAYS` through 2027, plus Juneteenth 2027
+    (Fri 06-18), which `HOLIDAYS` leaves out as doubtful.
 - **Tests:** `python tests/test_bidsheet_catchup.py` (pure: fake inbox and archive).
 - **Manual check from Snowflake when a run fails:** join ACCOUNT_USAGE
   LOGIN_HISTORY → SESSIONS (`client_environment ILIKE '%Windows%'`) →
@@ -279,9 +294,11 @@ Sheet's cached Eikon futures: 12-14% under the market, and only 4 of 8 months.
 Because that paste saved first, the email import skipped the day by design.
 
 - **Fix:** the day's futures were re-saved, first from the basis tracker's
-  `FUTURES_PRICES`, which turned out to be a day off. On 2026-10-12 they were
-  re-saved again from Massive's daily session bars for 10/06. Repair a past day's
-  futures from those bars, never from FUTURES_PRICES (see "Catch-up and the log").
+  `FUTURES_PRICES`, which was then a day off. On 2026-10-12 they were re-saved
+  again from Massive's daily session bars for 10/06.
+  - Repair a past day's futures from those bars (see "Catch-up and the log").
+  - `FUTURES_PRICES` has been right by date since the tracker's 2026-10-12 repair,
+    but the bars are what the import itself uses.
 - **The admin portal tile now opens this app** instead of its own copy.
 - **Save check:** **💾 Save to archive** runs `_futures_issues()` on click. It
   never runs on render, so the page never waits on Massive. It flags:
