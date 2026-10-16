@@ -304,7 +304,8 @@ Because that paste saved first, the email import skipped the day by design.
   never runs on render, so the page never waits on Massive. It flags:
   - months with no CBOT price;
   - for today's sheet only, any contract more than `STALE_FUTURES_PCT` (3%) from
-    the live Massive board (`_live_cbot_board`, cached 5 min).
+    the live Massive board (`_live_cbot_board`, cached 5 min);
+  - a CBOT row identical to the previous archived sheet's (added 2026-10-15).
 - **What the user sees:** nothing is saved, and a warning offers **Save anyway**
   or **Cancel**. This sits on top of the existing CIF/freight review checkbox
   (`_save_guard`).
@@ -316,6 +317,45 @@ Because that paste saved first, the email import skipped the day by design.
     `.env` can't point it at the real archive;
   - put the repo on `sys.path`;
   - pick "✏️ Working (live)" in the sidebar first.
+  - **AppTest can't open the Inputs tab now.** The tabs are lazy
+    (`st.tabs(..., on_change="rerun")` + `if tabs[i].open:`), and AppTest has no
+    way to select a tab, so only the first tab renders. To test the Inputs-tab
+    functions, pull them out of `app.py` with `ast` and run them with a stand-in
+    `st.session_state` (see "Dates are Central time" below).
+
+### Dates are Central time, not the server's (2026-10-15)
+
+On 10/15 Kolten updated the sheet at 8:29 PM CT and it saved as **10/16**, with
+futures that looked a day off. Two causes:
+
+- **Streamlit Cloud runs on UTC.** After 7 PM CT, `dt.date.today()` there is
+  already tomorrow, and the As-of box defaulted to it.
+  - **Fix:** `_today()` in `app.py` is the America/Chicago date. Use it for any
+    date the user sees or saves, never `dt.date.today()`.
+- **After the 7 PM reopen the live Massive board is the next session's
+  overnight trade,** and Massive labels it with the next day's date.
+  - **Fix:** the 🔄 Massive button takes the live board only for today before
+    7 PM CT (the close, after 1:20) or a future As-of date
+    (`_uses_live_board`).
+  - For a past date, or today after 7 PM, it fills that date's own settlement
+    from the daily session bars (`_cbot_board_for` →
+    `bidsheet._closing_board`), the same source the email import uses.
+- **The working sheet starts from the last saved day,** futures included. So a
+  CBOT row nobody re-pulled is the previous day's prices: only a day's move,
+  under the 3% stale check.
+  - **Fix:** the Save check now also flags a commodity whose whole CBOT row is
+    identical to the previous archived sheet's.
+- **Repair:** the mis-dated day was moved to 10/15 with 10/15's settlement
+  (scratchpad `move_sheet_date.py`, JSON backup first). The 10/16 copy was
+  deleted.
+- **The As-of help text was wrong.** It said a pasted freight table's date sets
+  the As-of date. That stopped long ago (`apply_pasted_tables` only shows the
+  date), and the text now says so.
+- **Test:** the scratchpad's `test_riverfob_functions.py` pulls `_today`,
+  `_uses_live_board`, `_cbot_board_for`, `_pull_massive_futures` and
+  `_futures_issues` out of `app.py` with `ast`. It runs them read-only against
+  the real archive and Massive. All 8 checks passed at 9:17 PM CT on 10/15, with
+  Corn Dec filled at 4.78, the 10/15 settle.
 
 ## 💵 Net Carry tab (added 2026-10-05)
 

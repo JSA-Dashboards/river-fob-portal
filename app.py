@@ -36,6 +36,17 @@ import delivery_period as DP
 import fob_vessel
 import massive_futures
 import barge_flows as BF
+from zoneinfo import ZoneInfo
+
+CT = ZoneInfo("America/Chicago")
+
+
+def _today():
+    """Today in Central time, the desk's day. Streamlit Cloud runs on UTC, so
+    the server's date.today() is already TOMORROW after 7 PM CT: on 2026-10-15
+    an 8:29 PM update was saved under 2026-10-16. Use this for any date the
+    user sees or saves."""
+    return dt.datetime.now(CT).date()
 
 # Net Carry tab: modules vendored unchanged from the basis tracker (sync_carry_modules.py there) plus this
 # portal's adapter + HTML. A failed import must not take the whole portal down - the tab says why instead.
@@ -704,7 +715,7 @@ def _init_state():
         # Default to the live front-month fed funds + 2.25% (same source and
         # convention as the cost-of-carry sheet); fall back to the static seed
         # if the live rate can't be read. Still editable below.
-        _ff = _live_fed_funds(dt.date.today().isoformat())
+        _ff = _live_fed_funds(_today().isoformat())
         st.session_state.interest_pct = _ff["rate"] if _ff else S.SEED_INTEREST_PCT
     if "editor_ver" not in st.session_state:
         st.session_state.editor_ver = 0
@@ -821,7 +832,7 @@ with st.sidebar:
             view_choice = None
             st.info("No archived dates yet.")
         as_of = (dt.date.fromisoformat(view_choice) if view_choice
-                 else dt.date.today())
+                 else _today())
         M.MONTHS = M.months_for(as_of)
         M.CONTRACTS = {c: M.contracts_for(c, as_of) for c in M.COMMODITIES}
         _init_state()
@@ -830,10 +841,10 @@ with st.sidebar:
     else:
         st.subheader("Snapshot")
         as_of = st.date_input(
-            "As-of date", value=dt.date.today(), key="as_of_input",
-            help="The date the inputs represent and will save under. Can be a "
-                 "future date when prepping the next sheet. Auto-set when you "
-                 "paste a dated freight table.")
+            "As-of date", value=_today(), key="as_of_input",
+            help="The date the inputs represent and will save under (today in "
+                 "Central time by default). Can be a future date when prepping the "
+                 "next sheet. A pasted freight table's date is shown, not applied.")
         # Roll the working delivery window + contracts to the chosen as-of month
         # (e.g. July drops June and adds February), then create/reindex inputs.
         M.MONTHS = M.months_for(as_of)
@@ -855,7 +866,7 @@ with st.sidebar:
             help="Used for % Full Carry; storage is per-commodity on the Inputs tab. "
                  "Defaults to live front-month fed funds + "
                  f"{massive_futures.FED_FUNDS_SPREAD_PCT:.2f}% (CME ZQ).")
-        _ff = _live_fed_funds(dt.date.today().isoformat())
+        _ff = _live_fed_funds(_today().isoformat())
         if _ff:
             st.caption(
                 f"Live fed funds **{_ff['ff']:.3f}%** + "
@@ -1585,7 +1596,7 @@ def render_seasonal_tab():
                                  "enough for the 5-year lines and 10-year band. "
                                  "Enable this to add analog years further back.")
     since = None if full_hist else (
-        dt.date.today() - dt.timedelta(days=365 * 13 + 4)).isoformat()
+        _today() - dt.timedelta(days=365 * 13 + 4)).isoformat()
 
     dates = db.list_dates()
     sig = (len(dates), dates[0] if dates else "", since or "all")
@@ -2381,7 +2392,7 @@ def render_riverbids_tab():
                 "**BASIS_DATABASE_URL** secret to show them here.")
         return
 
-    today = dt.date.today()
+    today = _today()
     c1, c2 = st.columns([1, 1])
     with c2:
         days = st.slider("Include bid sheets from the last (days)", 7, 60, 30,
@@ -3680,22 +3691,46 @@ def apply_pasted_tables(cif_text, frt_text, fut_text=""):
     return msgs, errs
 
 
-def _pull_massive_futures():
-    """Fill the working CBOT row for every commodity from live Massive settlements
-    and recompute spreads (same fill path as the futures paste). Returns
+def _uses_live_board(as_of):
+    """True when the live Massive board IS the as-of date's market: the date is
+    today (CT) before the 7 PM reopen (after the 1:20 close that's the close), or
+    a future date being prepped. A past date, or today after the reopen (when the
+    live board is the NEXT session's overnight trade), takes that date's own
+    settlement from Massive's daily session bars instead, the source the Bid
+    Sheet import uses for the same case (bidsheet._closing_board)."""
+    now = dt.datetime.now(CT)
+    return as_of > now.date() or (as_of == now.date() and now.hour < 19)
+
+
+def _cbot_board_for(commodity, as_of, active):
+    """{month letter: $/bu} to fill a commodity's CBOT row for `as_of` (see
+    _uses_live_board)."""
+    if _uses_live_board(as_of):
+        return massive_futures.cbot_curve(commodity)
+    import bidsheet
+    syms = {bidsheet.close_symbol(commodity, code, as_of): code
+            for code in dict.fromkeys(active) if code}
+    closes = bidsheet._closing_board(as_of, set(syms))
+    return {code[-1]: closes[s] for s, code in syms.items() if s in closes}
+
+
+def _pull_massive_futures(as_of):
+    """Fill the working CBOT row for every commodity from Massive (the live board,
+    or the as-of date's own settlement; see _uses_live_board) and recompute
+    spreads (same fill path as the futures paste). Returns
     (n_filled, [commodities], error_or_None)."""
     if not massive_futures.configured():
         return 0, [], "MASSIVE_API_KEY is not configured for this deployment."
     filled, done = 0, []
     for commodity in M.COMMODITIES:
+        active = (st.session_state.get(f"contracts_{commodity}")
+                  or list(M.CONTRACTS[commodity]))
         try:
-            curve = massive_futures.cbot_curve(commodity)      # {letter: $/bu}
+            curve = _cbot_board_for(commodity, as_of, active)   # {letter: $/bu}
         except Exception as e:
             return filled, done, f"Massive API error: {e}"
         if not curve:
             continue
-        active = (st.session_state.get(f"contracts_{commodity}")
-                  or list(M.CONTRACTS[commodity]))
         cur = st.session_state[f"cif_{commodity}"]
         for i, mth in enumerate(M.MONTHS):
             if i >= len(active):
@@ -3751,17 +3786,31 @@ def _futures_issues(as_of):
     clicked (not on every render, so the page never waits on Massive): months with
     no price, and (for today's sheet only, since the live board says nothing about
     an older date) contracts more than STALE_FUTURES_PCT from the Massive board.
-    No Massive key or no answer means only the missing-month check."""
-    from zoneinfo import ZoneInfo
-    today = dt.datetime.now(ZoneInfo("America/Chicago")).date()
+    No Massive key or no answer means only the missing-month check.
+
+    Also flags a CBOT row IDENTICAL to the previous archived sheet's. The working
+    sheet starts from the last saved day, so a row nobody re-pulled is yesterday's
+    prices: on 2026-10-15 a sheet went in with 10/14's futures. That is only a day's
+    move, too small for the stale check."""
+    today = _today()
     board = (_live_cbot_board()
              if as_of == today and massive_futures.configured() else {})
+    prev = max((d for d in (str(x)[:10] for x in db.list_dates())
+                if d < as_of.isoformat()), default=None)
+    prev_fut = (db.load_extras(prev)[0] or {}) if prev else {}
     issues = []
     for commodity in M.COMMODITIES:
         df = st.session_state[f"cif_{commodity}"]
         active = (st.session_state.get(f"contracts_{commodity}")
                   or list(M.CONTRACTS[commodity]))
         curve = board.get(commodity) or {}
+        before = prev_fut.get(commodity) or {}
+        priced = {m: _safe(df.loc[m, "Futures"]) for m in M.MONTHS}
+        priced = {m: v for m, v in priced.items() if v is not None}
+        if priced and before and all(m in before and abs(before[m] - v) < 1e-9
+                                     for m, v in priced.items()):
+            issues.append(f"{commodity}: CBOT row is the same as the {prev} sheet's "
+                          "(carried over, not pulled for this date)")
         missing, stale, checked = [], [], set()
         for i, mth in enumerate(M.MONTHS):
             v = _safe(df.loc[mth, "Futures"])
@@ -3791,9 +3840,10 @@ def render_inputs_tab(as_of):
             for e in pr[1]:
                 st.error(e)
         st.caption("Copy each table from your daily source and paste below "
-                   "(headers included). MILO, TW and NW rows are ignored; the "
-                   "freight date auto-sets the as-of date. Futures come live from "
-                   "Massive — use the 🔄 button below.")
+                   "(headers included). MILO, TW and NW rows are ignored. The "
+                   "freight table's date is shown, not applied: the sheet saves under "
+                   "the sidebar's As-of date. Futures come from Massive — use the 🔄 "
+                   "button below.")
         pc1, pc2 = st.columns(2)
         with pc1:
             cif_text = st.text_area("CIF NOLA table", height=220, key="paste_cif")
@@ -3809,15 +3859,20 @@ def render_inputs_tab(as_of):
         (st.success if pm[0] == "ok" else st.error)(pm[1])
     if massive_futures.configured():
         if st.button("🔄 Pull live CBOT futures (Massive)",
-                     help="Fill the CBOT row for corn/soy/wheat from live Massive "
-                          "settlements and recompute spreads — no Barchart add-in "
-                          "needed. Save to archive it."):
-            with st.spinner("Fetching live CBOT settlements…"):
-                n, done, err = _pull_massive_futures()
+                     help="Fill the CBOT row for corn/soy/wheat from Massive and "
+                          "recompute spreads. For today before 7 PM CT that's the live "
+                          "board (the close, after 1:20). For an earlier As-of date, or "
+                          "after the 7 PM reopen, it's that date's own settlement, never "
+                          "the overnight session. Save to archive it."):
+            live = _uses_live_board(as_of)
+            with st.spinner("Fetching the live CBOT board…" if live
+                            else f"Fetching CBOT settlements for {as_of:%m/%d}…"):
+                n, done, err = _pull_massive_futures(as_of)
             st.session_state["massive_pull_msg"] = (
                 ("error", f"Massive pull failed: {err}") if err else
-                ("ok", f"✓ Filled {n} live CBOT values ({', '.join(done)}). "
-                       "Review and Save to archive."))
+                ("ok", f"✓ Filled {n} CBOT values ({', '.join(done)}) from "
+                       + ("the live board" if live else f"{as_of:%m/%d}'s settlement")
+                       + ". Review and Save to archive."))
             if not err:
                 st.session_state.pop("save_futures_issues", None)
                 _bump_editors()
@@ -4479,7 +4534,7 @@ _DISCLAIMER = (
     "basis for investment decisions. Past performance is not indicative of future "
     "results. This message may contain confidential or proprietary information "
     "intended solely for the use of the designated recipient. "
-    f"&copy; John Stewart &amp; Associates, Inc. {dt.date.today().year}")
+    f"&copy; John Stewart &amp; Associates, Inc. {_today().year}")
 st.markdown(
     '<div style="font-family:inherit;margin-top:1.5rem;padding-top:0.7rem;border-top:1px solid #e0e0e0;'
     'font-size:inherit;line-height:1.4;color:#8a9199;text-align:justify;">'
