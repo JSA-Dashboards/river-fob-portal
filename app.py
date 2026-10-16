@@ -1245,7 +1245,10 @@ def render_block(commodity, as_of, cif_row, fut_row, freight_by_region,
                     M.cash_vs_delivery(commodity, grid[cfg["cash_loc"]], cash_c, months)))
     p_cash = prior.get("cash", {})
     cash_cells = "".join(_dir_td(cash[m], p_cash.get(m), "fob") for m in months)
-    rows.append(f'<tr class="strong"><td class="lbl">{cfg["cash_label"]}</td>'
+    # `snap-end` tags the last row of the sheet's top (header through % Full Carry):
+    # the toolbar's Summary PNG / Copy shoots only down to it.
+    end = "" if show_carry else " snap-end"
+    rows.append(f'<tr class="strong{end}"><td class="lbl">{cfg["cash_label"]}</td>'
                 f'{de_blank}{cash_cells}</tr>')
 
     # Spreads / Carry section (after Cash vs Delivery, before river reaches).
@@ -1270,7 +1273,7 @@ def render_block(commodity, as_of, cif_row, fut_row, freight_by_region,
             pos = pad + 2 * i + 1
             if pos < len(ccells):
                 ccells[pos] = _carry_pct_cell(carry[i])
-        rows.append('<tr class="spread"><td class="lbl">% Full Carry</td>'
+        rows.append('<tr class="spread snap-end"><td class="lbl">% Full Carry</td>'
                     + de_blank + "".join(ccells) + "</tr>")
 
     band = True
@@ -2757,10 +2760,22 @@ _SNAP_JS = """
   <button id="cp" style="font:600 13px system-ui,sans-serif;color:#0693e3;
     background:#fff;border:1.5px solid #0693e3;border-radius:6px;padding:6px 12px;
     cursor:pointer">\U0001F4CB Copy</button>
+  <span id="top" style="display:none;gap:6px;align-items:center;margin-left:4px;
+    padding-left:10px;border-left:1px solid #ddd">
+    <button id="dl2" title="Only the top of the sheet: header through % Full Carry"
+      style="font:600 13px system-ui,sans-serif;color:#fff;background:#0693e3;
+      border:none;border-radius:6px;padding:6px 12px;cursor:pointer">\U0001F4E5 Summary PNG</button>
+    <button id="cp2" title="Only the top of the sheet: header through % Full Carry"
+      style="font:600 13px system-ui,sans-serif;color:#0693e3;background:#fff;
+      border:1.5px solid #0693e3;border-radius:6px;padding:6px 12px;
+      cursor:pointer">\U0001F4CB Copy summary</button>
+  </span>
   <span id="msg" style="font:12px system-ui,sans-serif;color:#888"></span>
 </div>
 <script>
 const P=window.parent, PD=P.document, TARGET="__ID__", FN="__FN__";
+const CUT="__CUT__", FN2="__FN2__";
+if(CUT) document.getElementById("top").style.display="inline-flex";
 function ensureH2C(){
   if(P.html2canvas) return Promise.resolve();
   if(P.__h2c) return P.__h2c;
@@ -2784,30 +2799,53 @@ function target(){
   }
   return charts[0]||el;
 }
-async function shoot(){
+// `cut` (a selector inside the target) shoots only down to that row: the rows
+// after it are dropped from html2canvas's clone, never from the page. If the
+// image still comes back full height, it is cropped to the trimmed height.
+async function shoot(cut){
   await ensureH2C();
   const el=target(); if(!el) throw new Error("nothing to capture");
-  return await P.html2canvas(el,{scale:2,backgroundColor:"#ffffff",logging:false,useCORS:true});
+  const opts={scale:2,backgroundColor:"#ffffff",logging:false,useCORS:true};
+  let keepH=0;
+  if(cut){
+    if(!el.querySelector(cut)) throw new Error("no summary rows on this sheet");
+    opts.onclone=doc=>{
+      const c=doc.getElementById(TARGET), row=c&&c.querySelector(cut);
+      if(!row) return;
+      while(row.nextElementSibling) row.nextElementSibling.remove();
+      keepH=c.getBoundingClientRect().height;
+    };
+  }
+  const canvas=await P.html2canvas(el,opts);
+  const h=Math.round(keepH*opts.scale);
+  if(!keepH || canvas.height<=h+2) return canvas;
+  const out=PD.createElement("canvas"); out.width=canvas.width; out.height=h;
+  out.getContext("2d").drawImage(canvas,0,0);
+  return out;
 }
 const msg=t=>{const m=document.getElementById("msg"); m.textContent=t;
   if(t) setTimeout(()=>{m.textContent="";},2500);};
-document.getElementById("dl").onclick=async()=>{
-  msg("…"); try{ const c=await shoot(); const a=document.createElement("a");
-    a.download=FN+".png"; a.href=c.toDataURL("image/png"); a.click(); msg("✓ saved"); }
-  catch(e){ msg("⚠ "+e.message); }
-};
-// Promise-based ClipboardItem so the async html2canvas work keeps the click's
-// user-gesture (a plain await before clipboard.write would drop it).
-document.getElementById("cp").onclick=async()=>{
-  msg("…");
-  try{
-    await navigator.clipboard.write([new ClipboardItem({"image/png":(async()=>{
-      const c=await shoot();
-      return await new Promise(r=>c.toBlob(r,"image/png"));
-    })()})]);
-    msg("✓ copied");
-  }catch(e){ msg("⚠ "+(e.name||e.message)); }
-};
+function bind(dl,cp,cut,fn){
+  document.getElementById(dl).onclick=async()=>{
+    msg("…"); try{ const c=await shoot(cut); const a=document.createElement("a");
+      a.download=fn+".png"; a.href=c.toDataURL("image/png"); a.click(); msg("✓ saved"); }
+    catch(e){ msg("⚠ "+e.message); }
+  };
+  // Promise-based ClipboardItem so the async html2canvas work keeps the click's
+  // user-gesture (a plain await before clipboard.write would drop it).
+  document.getElementById(cp).onclick=async()=>{
+    msg("…");
+    try{
+      await navigator.clipboard.write([new ClipboardItem({"image/png":(async()=>{
+        const c=await shoot(cut);
+        return await new Promise(r=>c.toBlob(r,"image/png"));
+      })()})]);
+      msg("✓ copied");
+    }catch(e){ msg("⚠ "+(e.name||e.message)); }
+  };
+}
+bind("dl","cp","",FN);
+if(CUT) bind("dl2","cp2",CUT,FN2);
 </script>
 """
 
@@ -2819,15 +2857,19 @@ def _snap_anchor(snap_id):
                 unsafe_allow_html=True)
 
 
-def _snap_toolbar(snap_id, filename, height=44):
+def _snap_toolbar(snap_id, filename, height=44, summary=None):
     """📥 PNG + 📋 Copy that screenshot the actual on-screen element (styled sheet
     or rendered chart) client-side via html2canvas — a true snapshot, not a
     server-rebuilt image. Main app only. `snap_id` is a wrapper div's id (tables)
-    or a _snap_anchor placed just before a chart."""
+    or a _snap_anchor placed just before a chart. `summary` (a filename) adds
+    📥 Summary PNG + 📋 Copy summary, which shoot only the top of a FOB sheet:
+    down to the row render_block tags `snap-end` (% Full Carry)."""
     if VIEW_ONLY:
         return
     components.html(
-        _SNAP_JS.replace("__ID__", snap_id).replace("__FN__", _safe_filename(filename)),
+        _SNAP_JS.replace("__ID__", snap_id).replace("__FN__", _safe_filename(filename))
+        .replace("__CUT__", "tr.snap-end" if summary else "")
+        .replace("__FN2__", _safe_filename(summary) if summary else ""),
         height=height)
 
 
@@ -4103,7 +4145,8 @@ def _render_archived_commodity(commodity):
                                contracts=contracts, months=months, prior=prior)
                 + '</div>', unsafe_allow_html=True)
     _snap_toolbar(f"snap_fob_{commodity}",
-                  f"{commodity} FOB Sheet {view_date:%m-%d-%y}")
+                  f"{commodity} FOB Sheet {view_date:%m-%d-%y}",
+                  summary=f"{commodity} FOB Summary {view_date:%m-%d-%y}")
     st.markdown("##### 📈 Top of Carry")
     render_carry_chart(commodity, grid, spreads, as_of=view_date, months=months,
                        contracts=contracts, cur_label=f"{view_date:%m/%d/%y}",
@@ -4510,7 +4553,8 @@ else:
                                            contracts=st.session_state.get(f"contracts_{commodity}"))
                             + '</div>', unsafe_allow_html=True)
                 _snap_toolbar(f"snap_fob_{commodity}",
-                              f"{commodity} FOB Sheet {as_of:%m-%d-%y}")
+                              f"{commodity} FOB Sheet {as_of:%m-%d-%y}",
+                              summary=f"{commodity} FOB Summary {as_of:%m-%d-%y}")
                 st.markdown("##### 📈 Top of Carry")
                 render_carry_chart(commodity, M.compute_fob_grid(commodity, cif_row, fbr),
                                    spreads, as_of=as_of, fut_row=fut_row)
