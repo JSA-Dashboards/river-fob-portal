@@ -475,7 +475,10 @@ drives it and the comparison; the section also shows when the selected sheet has
   September, so the report's window starts at week 4, or 5 when September has five Wednesdays, and the default is that week and 7); the same weeks,
   counted from September, in every crop year, interest still from the report's third (soybean fifth) weekly bid — except that a window opening
   BEFORE the report's moves the purchase with it (its own 3rd / 5th bid, "bought Sep 23"), and the season chart now starts in September
-  (2026-10-19; own harvest basis = this year only, the every-year what-if is gone; vendored, see the tracker's `CLAUDE.md`). The
+  (2026-10-19; own harvest basis = this year only, the every-year what-if is gone; vendored, see the tracker's `CLAUDE.md`). Best return is
+  now the best LOCKABLE one — the nearby bid or any forward month sold ahead, on any day — and the season chart shows today's forward curve; this
+  archive has forward months on every sheet since 2006, so every river year gets the forward side (the tracker's "Best return = the best
+  LOCKABLE return"). The
   sheet whose first column is Sep tags that September's first sheet(s) U for every location (2008, 2009 x2, 2013, 2021, 2026), so a September-start
   window moves those bids to Dec at the Dec - Sep spread of the last trading day before the September contract's first notice day (`rtc.sept_roll_day`
   / `sept_to_dec_spread`; a bid already quoted off Dec is left alone, an unmeasurable spread leaves the bid out). Vendored — see the tracker's
