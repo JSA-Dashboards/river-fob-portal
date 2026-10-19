@@ -471,8 +471,9 @@ drives it and the comparison; the section also shows when the selected sheet has
 - **Harvest window (2026-10-12; Kolten: "we default to establishing corn basis as of Oct and for 7 weeks ... yes, add start week and number of
   weeks"; "... months that start in September some will have this month basis the CU ... roll this accordingly. Use the last day prior to first
   notice day to establish the spread level"; "Greenville is an example on river fob"):** the block's **Start week** / **Number of weeks** boxes choose
-  which weekly bids the calculated harvest basis averages (week 1 = the first Wednesday of October, week 0 and back = the September Wednesdays; the
-  default 1 and 7 is the report's window); the same weeks in every crop year, interest still from the report's third (soybean fifth) weekly bid. The
+  which weekly bids the calculated harvest basis averages (since 2026-10-19, Kolten: "start with week zero as Sep 1": week 0 = the first Wednesday of
+  September, so the report's window starts at week 4, or 5 when September has five Wednesdays, and the default is that week and 7); the same weeks,
+  counted from September, in every crop year, interest still from the report's third (soybean fifth) weekly bid. The
   sheet whose first column is Sep tags that September's first sheet(s) U for every location (2008, 2009 x2, 2013, 2021, 2026), so a September-start
   window moves those bids to Dec at the Dec - Sep spread of the last trading day before the September contract's first notice day (`rtc.sept_roll_day`
   / `sept_to_dec_spread`; a bid already quoted off Dec is left alone, an unmeasurable spread leaves the bid out). Vendored — see the tracker's
