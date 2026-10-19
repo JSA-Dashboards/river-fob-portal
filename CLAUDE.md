@@ -473,7 +473,9 @@ drives it and the comparison; the section also shows when the selected sheet has
   notice day to establish the spread level"; "Greenville is an example on river fob"):** the block's **Start week** / **Number of weeks** boxes choose
   which weekly bids the calculated harvest basis averages (since 2026-10-19, Kolten: "start with week zero as Sep 1": week 0 = the first Wednesday of
   September, so the report's window starts at week 4, or 5 when September has five Wednesdays, and the default is that week and 7); the same weeks,
-  counted from September, in every crop year, interest still from the report's third (soybean fifth) weekly bid. The
+  counted from September, in every crop year, interest still from the report's third (soybean fifth) weekly bid — except that a window opening
+  BEFORE the report's moves the purchase with it (its own 3rd / 5th bid, "bought Sep 23"), and the season chart now starts in September
+  (2026-10-19; own harvest basis = this year only, the every-year what-if is gone; vendored, see the tracker's `CLAUDE.md`). The
   sheet whose first column is Sep tags that September's first sheet(s) U for every location (2008, 2009 x2, 2013, 2021, 2026), so a September-start
   window moves those bids to Dec at the Dec - Sep spread of the last trading day before the September contract's first notice day (`rtc.sept_roll_day`
   / `sept_to_dec_spread`; a bid already quoted off Dec is left alone, an unmeasurable spread leaves the bid out). Vendored — see the tracker's
