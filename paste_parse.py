@@ -74,8 +74,102 @@ def parse_cif(text):
     return {"cif": cif, "contracts": contracts}, None
 
 
+# ── the Ceres barge freight table (Kolten 2026-10-21) ────────────────────────────────────────────────
+# Two header rows (river over location: "St. Paul / Savage", "St. Louis / 14'", "Ohio / Jeff/Cincy" ...), period rows down the side
+# ("WK 10/18", "NOV", "AMJJ"), each cell a bid/ask pair ("775/825"): the BID is used. Columns -> the sheet's freight regions:
+# St. Louis 14' is the sheet's STL (Doug's Bid Sheet matched it in every month on 10/19; the 12' column never did), Ohio Jeff/Cincy
+# its Ohio (Ohio Lower is not used, as L OHIO is not in the old format); MTCT = Lower Miss, St. Paul / Savage = Upper Miss.
+_MONTH_KEYS = ["Jan", "Feb", "Mar", "Apr", "May", "June", "July", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _ceres_region(label):
+    """A Ceres column's combined header ('St. Louis 14'') -> the sheet's freight region, or None for a column the sheet does not use."""
+    t = " ".join(label.upper().split())
+    if "MTCT" in t:
+        return "Lower Miss"
+    if "ST. PAUL" in t or "ST PAUL" in t or "SAVAGE" in t:
+        return "Upper Miss"
+    if "MCGREGOR" in t:
+        return "McGregor South"
+    if "DAVENPORT" in t:
+        return "Davenport South"
+    if ("ST. LOUIS" in t or "ST LOUIS" in t) and "14" in t:
+        return "STL"
+    if "ILLINOIS" in t:
+        return "IL"
+    if "OHIO" in t and ("JEFF" in t or "CINCY" in t or "CINCI" in t):
+        return "Ohio"
+    return None
+
+
+def _period_months(label):
+    """A Ceres period label -> (months, rank): a month ('NOV') ranks 3, a week ('WK 10/18' -> Oct) 2, a package of month initials
+    ('AMJJ' -> Apr, May, June, July; 'JFM') 1. ([], 0) for anything else."""
+    u = label.upper().strip().rstrip(".")
+    if u in _MONTHS:
+        return [_MONTHS[u]], 3
+    m = re.match(r"^(?:WK|WEEK)\.?\s*(\d{1,2})/(\d{1,2})", u)
+    if m and 1 <= int(m.group(1)) <= 12:
+        return [_MONTH_KEYS[int(m.group(1)) - 1]], 2
+    if re.fullmatch(r"[A-Z]{2,6}", u):
+        initials = [k[0].upper() for k in _MONTH_KEYS]
+        for s in range(12):
+            if all(initials[(s + i) % 12] == ch for i, ch in enumerate(u)):
+                return [_MONTH_KEYS[(s + i) % 12] for i in range(len(u))], 1
+    return [], 0
+
+
+def _bid(cell):
+    """'775/825' -> 7.75 (the bid, % of tariff / 100); '775' -> 7.75; '' -> None (no quote: the river is closed or not quoted)."""
+    s = cell.replace("%", "").replace(",", "").strip()
+    if not s:
+        return None
+    try:
+        return float(s.split("/")[0].strip()) / 100.0
+    except ValueError:
+        return None
+
+
+def parse_ceres_freight(text):
+    """The Ceres bid/ask barge freight table -> ({'freight': {region: {month: tariff_mult or None}}, 'date', 'format': 'ceres',
+    'used': {region: column label}}, None), or (None, error) when it is not that table.
+
+    Only the BID of each cell is used. A month row wins over a week row, and a week row over a package (AMJJ fills only the months no
+    row of their own covers); of several weeks in one month the first (the current week) is used. A BLANK cell in a column the sheet
+    uses comes back as None for that month: the reach is closed / not quoted, and the pasted table replaces yesterday's number."""
+    raw = [ln for ln in text.splitlines() if ln.strip()]
+    rows = [[c.strip() for c in ln.split("\t")] if "\t" in ln else [c.strip() for c in re.split(r" {2,}", ln)] for ln in raw]
+    first = next((i for i, r in enumerate(rows) if r and _period_months(r[0])[1]), None)
+    if first is None or first == 0:
+        return None, "no period rows (WK / month / AMJJ) under a header"
+    width = max(len(r) for r in rows)
+    labels = [" ".join(r[i] for r in rows[:first] if i < len(r) and r[i]) for i in range(width)]
+    cols = {i: _ceres_region(lab) for i, lab in enumerate(labels) if i > 0}
+    cols = {i: reg for i, reg in cols.items() if reg}
+    if len(cols) < 3:
+        return None, "not the Ceres table (no St. Paul / McGregor / Davenport / St. Louis / Illinois / Ohio / MTCT columns)"
+    best: dict = {}                                                        # (region, month) -> (rank, value)
+    for r in rows[first:]:
+        months, rank = _period_months(r[0]) if r else ([], 0)
+        for mon in months:
+            for ci, region in cols.items():
+                val = _bid(r[ci]) if ci < len(r) else None
+                have = best.get((region, mon))
+                if have is None or rank > have[0]:                         # a higher-ranked row wins; the first of equals stays
+                    best[(region, mon)] = (rank, val)
+    freight: dict = {}
+    for (region, mon), (_rank, val) in best.items():
+        freight.setdefault(region, {})[mon] = val
+    return {"freight": freight, "date": _find_date(text), "format": "ceres",
+            "used": {cols[i]: labels[i] for i in sorted(cols)}}, None
+
+
 def parse_freight(text):
-    """-> ({region: {month: tariff_mult}}, detected_date) or (None, error)."""
+    """-> ({region: {month: tariff_mult}}, detected_date) or (None, error). Reads the Ceres bid/ask table (parse_ceres_freight) or the
+    older single-header one (ILL / OHIO / MM / CITIES / STL / MTCT)."""
+    ceres, _why = parse_ceres_freight(text)
+    if ceres is not None:
+        return ceres, None
     rows = _rows(text)
     col = {}
     for r in rows:
@@ -86,7 +180,8 @@ def parse_freight(text):
         if "MTCT" in col:
             break
     if not col:
-        return None, "Couldn't find a freight header (ILL/OHIO/MM/CITIES/STL/MTCT)."
+        return None, ("Couldn't find a freight header (ILL/OHIO/MM/CITIES/STL/MTCT), or the Ceres table's "
+                      "(St. Paul / McGregor / Davenport / St. Louis / Illinois / Ohio / MTCT over WK / month rows).")
 
     freight = {}
     for r in rows:

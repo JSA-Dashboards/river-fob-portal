@@ -3665,16 +3665,23 @@ def apply_pasted_tables(cif_text, frt_text, fut_text=""):
             errs.append("Freight: " + err)
         else:
             fdf = st.session_state.freight
-            n = 0
+            n = cleared = 0
             for region, mv in res["freight"].items():
                 if region not in M.FREIGHT_REGIONS:
                     continue
                 for m, v in mv.items():
                     if m in M.MONTHS:
-                        fdf.loc[region, m] = v
-                        n += 1
+                        fdf.loc[region, m] = v           # None = a blank cell in the pasted table: closed / not quoted
+                        n += v is not None
+                        cleared += v is None
             st.session_state.freight = fdf
-            msgs.append(f"Freight — filled {n} values across {len(res['freight'])} reaches.")
+            if res.get("format") == "ceres":
+                msgs.append(f"Freight (Ceres table, bids) — filled {n} values across {len(res['freight'])} reaches"
+                            + (f"; {cleared} month{'s' if cleared != 1 else ''} left blank where the table has no quote "
+                               "(closed / not quoted)" if cleared else "")
+                            + ". St. Louis 14' = STL, Ohio Jeff/Cincy = Ohio; St. Louis 12' and Ohio Lower are not used.")
+            else:
+                msgs.append(f"Freight — filled {n} values across {len(res['freight'])} reaches.")
             if res.get("date"):
                 # Don't move the As-of date — barge-freight tables are usually
                 # dated the prior session, which kept bumping Save back a day.

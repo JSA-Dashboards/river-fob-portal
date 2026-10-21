@@ -109,6 +109,22 @@ Scheduled jobs for this portal now (as of 2026-10-04):
 
 The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
 
+## Paste parser: the Ceres barge freight table (2026-10-21)
+
+`paste_parse.parse_freight` reads two freight layouts: the older single-header one (ILL / OHIO / MM / CITIES / STL / MTCT) and, since
+2026-10-21, the **Ceres bid/ask table** (`parse_ceres_freight`; Kolten: "it has the Bid/Ask in each. Just use the bid"). Two header rows
+(river over location), period rows WK 10/18 / NOV ... / AMJJ, cells like `775/825`:
+
+- **Bid only** (775/825 -> 7.75, a tariff multiple like the old table's 775%).
+- **Columns:** St. Paul/Savage = Upper Miss, McGregor South, Davenport South, **St. Louis 14' = STL** (Doug's Bid Sheet matched the 14' column
+  in every month on 10/19; 12' never did), Illinois = IL, **Ohio Jeff/Cincy = Ohio** (Ohio Lower not used, as L OHIO never was), MTCT = Lower Miss.
+- **Rows:** a month row wins; else the FIRST week row in a month (WK 10/18 -> Oct; WK 10/25 is ignored); a package of month initials (AMJJ ->
+  Apr-Jul, JFM) only fills months no row covers.
+- **A blank cell clears that month** (None: closed / not quoted) for the reaches the table covers, so yesterday's number does not linger in a
+  winter month (St. Paul Dec-Mar, McGregor/Davenport Jan-Mar on 10/21). The Inputs message says so and names the column choices.
+- Tests: `python tests/test_paste_parse.py` (Kolten's exact paste, ranks, packages, the old layout). Checked end to end in a local run: 46 values
+  across 7 reaches + 10 cleared months on the Oct-May window; nothing saved.
+
 ## Bid Sheet email import + the futures guard
 
 Daily CIF/freight now comes from Doug Schultz's **Bid Sheet** email (an `.xlsx`
