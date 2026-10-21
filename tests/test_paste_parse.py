@@ -71,9 +71,10 @@ check("period labels: 'WK 10/18' -> Oct, 'Week 11/1' -> Nov, AMJJ, JFM, NOV; 'TW
       and pp._period_months("AMJJ") == (["Apr", "May", "June", "July"], 1) and pp._period_months("JFM") == (["Jan", "Feb", "Mar"], 1)
       and pp._period_months("NOV") == (["Nov"], 3) and pp._period_months("TW") == ([], 0) and pp._period_months("Ship") == ([], 0))
 check("a single number (no ask) reads as the bid too", pp._bid("575") == 5.75 and pp._bid("575/625") == 5.75 and pp._bid("") is None)
-check("a two-space copy (no tabs) of a full row still parses",
-      pp.parse_freight("Ship  St. Paul  McGregor  Davenport  St. Louis  Illinois  MTCT\nPeriod  Savage  South  South  14'  x  y\n"
-                       "NOV  725/775  700/750  700/750  550/600  675/725  425/475\n")[0]["freight"]["STL"]["Nov"] == 5.5)
+for name, lost in (("single spaces", CERES.replace("\t", " ")), ("wide spaces", CERES.replace("\t", "    "))):
+    r_, e_ = pp.parse_freight(lost)
+    check(f"a copy that LOST its tabs ({name}) is refused with a plain message, never read with shifted columns",
+          r_ is None and "without its column breaks (tabs)" in e_ and "Nothing was filled" in e_, (r_ and r_.get("freight", {}).get("Upper Miss"), e_))
 
 print("the older single-header table still reads as before")
 OLD = ("Barge Freight 10/16/26\nMonth\tILL\tOHIO\tL OHIO\tMM\tCITIES\tSTL\tMTCT\nTW\t750\t725\t725\t775\t800\t600\t500\n"

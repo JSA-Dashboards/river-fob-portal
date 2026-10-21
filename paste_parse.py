@@ -130,6 +130,11 @@ def _bid(cell):
         return None
 
 
+_CERES_NO_TABS = ("This looks like the Ceres freight table, but it arrived without its column breaks (tabs), so the blank cells "
+                  "(closed months) can't be placed and the numbers would shift columns. Nothing was filled — copy the table again "
+                  "straight from the email or Excel and paste it here.")
+
+
 def parse_ceres_freight(text):
     """The Ceres bid/ask barge freight table -> ({'freight': {region: {month: tariff_mult or None}}, 'date', 'format': 'ceres',
     'used': {region: column label}}, None), or (None, error) when it is not that table.
@@ -137,8 +142,12 @@ def parse_ceres_freight(text):
     Only the BID of each cell is used. A month row wins over a week row, and a week row over a package (AMJJ fills only the months no
     row of their own covers); of several weeks in one month the first (the current week) is used. A BLANK cell in a column the sheet
     uses comes back as None for that month: the reach is closed / not quoted, and the pasted table replaces yesterday's number."""
+    if "\t" not in text and re.search(r"st\.?\s*paul|mcgregor|davenport|st\.?\s*louis", text, re.I):
+        # Without the tabs a blank cell leaves no trace, so every value after it lands one column early: a copy that lost its tabs once
+        # read St. Louis's January as Upper Miss's. Refuse instead of guessing.
+        return None, (_CERES_NO_TABS)
     raw = [ln for ln in text.splitlines() if ln.strip()]
-    rows = [[c.strip() for c in ln.split("\t")] if "\t" in ln else [c.strip() for c in re.split(r" {2,}", ln)] for ln in raw]
+    rows = [[c.strip() for c in ln.split("\t")] for ln in raw]
     first = next((i for i, r in enumerate(rows) if r and _period_months(r[0])[1]), None)
     if first is None or first == 0:
         return None, "no period rows (WK / month / AMJJ) under a header"
@@ -167,9 +176,11 @@ def parse_ceres_freight(text):
 def parse_freight(text):
     """-> ({region: {month: tariff_mult}}, detected_date) or (None, error). Reads the Ceres bid/ask table (parse_ceres_freight) or the
     older single-header one (ILL / OHIO / MM / CITIES / STL / MTCT)."""
-    ceres, _why = parse_ceres_freight(text)
+    ceres, why = parse_ceres_freight(text)
     if ceres is not None:
         return ceres, None
+    if why == _CERES_NO_TABS:
+        return None, why
     rows = _rows(text)
     col = {}
     for r in rows:
