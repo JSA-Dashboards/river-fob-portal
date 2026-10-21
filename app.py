@@ -3757,8 +3757,9 @@ def _cbot_board_for(commodity, as_of, active):
     if _uses_live_board(as_of):
         return massive_futures.cbot_curve(commodity)
     import bidsheet
-    syms = {bidsheet.close_symbol(commodity, code, as_of): code
-            for code in dict.fromkeys(active) if code}
+    syms = {bidsheet.close_symbol(commodity, code, as_of): code      # a code that is not a contract ('C103' from an old CIF
+            for code in dict.fromkeys(active)                        # paste) is skipped, not allowed to stop the whole pull
+            if code and str(code)[-1].upper() in "FGHJKMNQUVXZ"}
     closes = bidsheet._closing_board(as_of, set(syms))
     return {code[-1]: closes[s] for s, code in syms.items() if s in closes}
 

@@ -76,6 +76,19 @@ for name, lost in (("single spaces", CERES.replace("\t", " ")), ("wide spaces", 
     check(f"a copy that LOST its tabs ({name}) is refused with a plain message, never read with shifted columns",
           r_ is None and "without its column breaks (tabs)" in e_ and "Nothing was filled" in e_, (r_ and r_.get("freight", {}).get("Upper Miss"), e_))
 
+print("the CIF table's contract cells")
+c1, ce = pp.parse_cif("Month\tCORN\t\tMILO\t\tBEANS\t\tWHEAT\t\nOCT\t90\tZ\t80\tZ\t103\tX\t95\tZ\nJAN\t96\tH\t84\tH\t108\tF\t98\tH\n")
+check("a table with letter columns: each month's letter is kept (Corn Oct Z, Jan H; Beans Oct X, Jan F)",
+      ce is None and c1["contracts"]["Corn"] == {"Oct": "Z", "Jan": "H"} and c1["contracts"]["Soybeans"] == {"Oct": "X", "Jan": "F"}
+      and c1["cif"]["Soybeans"]["Oct"] == 1.03, c1)
+c2, _ = pp.parse_cif("Month\tCORN\tMILO\tBEANS\tWHEAT\nOCT\t90\t80\t103\t95\nNOV\t92\t82\t109\t96\n")
+check("a table with NO letter column records no contracts (it used to take the next cell's number: Corn 'C80', Beans 'S95' — the "
+      "Massive pull then failed with \"'3'\"/\"'0'\"), and the CIF values are still read",
+      c2["contracts"] == {"Corn": {}, "Soybeans": {}, "Wheat": {}} and c2["cif"]["Corn"] == {"Oct": 0.9, "Nov": 0.92}, c2)
+check("full contract codes read as their month letter ('CZ', 'ZCZ26', 'Z26' -> Z); junk does not ('80', 'MILO', '1.03')",
+      all(pp._CONTRACT_RE.match(s).group(1) == "Z" for s in ("CZ", "ZCZ26", "Z26", "Z"))
+      and not any(pp._CONTRACT_RE.match(s) for s in ("80", "MILO", "1.03", "")))
+
 print("the older single-header table still reads as before")
 OLD = ("Barge Freight 10/16/26\nMonth\tILL\tOHIO\tL OHIO\tMM\tCITIES\tSTL\tMTCT\nTW\t750\t725\t725\t775\t800\t600\t500\n"
        "OCT\t750%\t725%\t725%\t775%\t800%\t600%\t500%\nNOV\t675\t650\t650\t725\t750\t550\t475\n")

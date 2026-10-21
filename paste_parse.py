@@ -69,9 +69,14 @@ def parse_cif(text):
                 cif[commodity][mon] = float(r[ci].replace("%", "")) / 100.0
             except ValueError:
                 continue
-            if ci + 1 < len(r) and r[ci + 1]:
-                contracts[commodity][mon] = r[ci + 1].upper()
-    return {"cif": cif, "contracts": contracts}, None
+            m = _CONTRACT_RE.match(r[ci + 1].strip().upper()) if ci + 1 < len(r) and r[ci + 1] else None
+            if m:                                   # only a real contract code: a table with no letter column must not hand
+                contracts[commodity][mon] = m.group(1)   # the next cell's number in (it became 'C103', and the Massive pull
+    return {"cif": cif, "contracts": contracts}, None    # failed with "'3'" on 2026-10-21)
+
+
+# A CIF table's contract cell: a month letter, optionally with the root and the year ('Z', 'CZ', 'ZCZ26', 'Z26') -> the letter.
+_CONTRACT_RE = re.compile(r"^[A-Z]{0,3}?([FGHJKMNQUVXZ])\d{0,2}$")
 
 
 # ── the Ceres barge freight table (Kolten 2026-10-21) ────────────────────────────────────────────────
