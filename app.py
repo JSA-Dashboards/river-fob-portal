@@ -1335,6 +1335,27 @@ def _archived_carry(commodity, date_iso, loc, spreads):
     return M.top_carry(commodity, grid_d[loc], spreads)
 
 
+def _month_firsts(months, as_of):
+    """The first day of each window month, with its year ('Oct', 'Nov', 'Dec', 'Jan' on a 10/21/26 sheet -> Oct 1 2026 ... Jan 1
+    2027): a 'Spot' column is the as-of month. None for a label that names no month. Used to count actual days for interest."""
+    as_of = as_of or _today()
+    nums = [M.label_month_num(m) or (as_of.month if str(m).strip().lower() == "spot" else None) for m in months]
+    first = next((n for n in nums if n), None)
+    if first is None:
+        return [None] * len(months)
+    year = as_of.year + (1 if first < as_of.month and as_of.month - first > 6 else 0)
+    out, prev = [], first
+    for n in nums:
+        if n is None:
+            out.append(None)
+            continue
+        if n < prev:
+            year += 1
+        prev = n
+        out.append(dt.date(year, n, 1))
+    return out
+
+
 def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
                        contracts=None, cur_label=None, fut_row=None):
     """Top-of-carry (cash forward curve on spot futures) for a chosen location,
@@ -1361,8 +1382,9 @@ def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
     show_net = st.checkbox(
         "Net-of-interest carry", value=True, key=f"carry_net_{commodity}",
         help="Overlay the cash carry net of financing — gross carry minus "
-             "cumulative interest (spot futures × annual rate ÷ 12 per month), "
-             "anchored at the front month and again at October.")
+             "interest: spot futures × annual rate × actual days ÷ 360, from the "
+             "first of the front month (and again from October) to the first of "
+             "each delivery month, as in the Net Carry tab and the other carry calcs.")
 
     def _mdy(dd):
         return f"{dd.month}/{dd.day}/{dd.year % 100:02d}"
@@ -1376,24 +1398,31 @@ def render_carry_chart(commodity, grid, spreads, as_of=None, months=None,
         if v is not None and not pd.isna(v):
             rows.append({"Month": m, "Carry": float(v), "Series": cur_label})
 
-    # Net-of-interest carry: gross carry less cumulative financing, from two
-    # anchors — the front month and October. Monthly interest = spot futures ×
-    # annual rate ÷ 12; net(month) = gross(month) − (months held) × interest.
+    # Net-of-interest carry: gross carry less financing, from two anchors — the
+    # front month and October. Interest = spot futures × annual rate × actual
+    # days ÷ 360, from the first of the anchor month to the first of each delivery
+    # month: the Net Carry tab's convention (net_carry.py) and every other carry
+    # calc's (Kolten 2026-10-21: "switch it to days/360 to match the other carry
+    # calcs"; it was rate ÷ 12 per month held).
     net_series = []
     ref_price = (fut_row or {}).get(months[0]) if fut_row else None
     ipct = float(st.session_state.get("interest_pct", 0) or 0)
     if show_net and ref_price and ipct:
-        mo_int = ref_price * (ipct / 100.0) / 12.0
+        firsts = _month_firsts(months, as_of)
         anchors = [(0, f"Net of int (from {months[0]})")]
         if "Oct" in months and months.index("Oct") != 0:
             anchors.append((months.index("Oct"), "Net of int (from Oct)"))
         for a, lbl in anchors:
+            if firsts[a] is None:
+                continue
             net_series.append(lbl)
             for i in range(a, len(months)):
                 g = tc[i]
-                if g is None or pd.isna(g):
+                if g is None or pd.isna(g) or firsts[i] is None:
                     continue
-                rows.append({"Month": months[i], "Carry": float(g) - (i - a) * mo_int,
+                days = (firsts[i] - firsts[a]).days
+                rows.append({"Month": months[i],
+                             "Carry": float(g) - ref_price * (ipct / 100.0) * days / 360.0,
                              "Series": lbl})
 
     for d in cmp_dates:
