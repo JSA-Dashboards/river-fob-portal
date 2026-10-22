@@ -3764,17 +3764,28 @@ def _cbot_board_for(commodity, as_of, active):
     return {code[-1]: closes[s] for s, code in syms.items() if s in closes}
 
 
+def _bad_contract_codes(active):
+    """The working sheet's contract codes that are not contracts (their last character is not a month letter): 'C103', left by a
+    CIF paste with no letter column (the 10/20 sheet was SAVED that way, so every later working sheet started with them and the
+    Massive pull failed with "'3'" until it was repaired on 2026-10-21)."""
+    return [c for c in dict.fromkeys(active) if c and str(c)[-1].upper() not in "FGHJKMNQUVXZ"]
+
+
 def _pull_massive_futures(as_of):
     """Fill the working CBOT row for every commodity from Massive (the live board,
     or the as-of date's own settlement; see _uses_live_board) and recompute
     spreads (same fill path as the futures paste). Returns
-    (n_filled, [commodities], error_or_None)."""
+    (n_filled, [commodities], error_or_None). A commodity whose contract codes are
+    not contracts is reported as the error, after the others are filled."""
     if not massive_futures.configured():
         return 0, [], "MASSIVE_API_KEY is not configured for this deployment."
-    filled, done = 0, []
+    filled, done, bad_all = 0, [], []
     for commodity in M.COMMODITIES:
         active = (st.session_state.get(f"contracts_{commodity}")
                   or list(M.CONTRACTS[commodity]))
+        bad = _bad_contract_codes(active)
+        if bad:
+            bad_all.append(f"{commodity} ({', '.join(bad)})")
         try:
             curve = _cbot_board_for(commodity, as_of, active)   # {letter: $/bu}
         except Exception as e:
@@ -3803,6 +3814,10 @@ def _pull_massive_futures(as_of):
             st.session_state[f"carry_{commodity}"] = pd.DataFrame(
                 {lbl: [v] for lbl, v in vals.items()}, index=["Spread"])
         done.append(commodity)
+    if bad_all:
+        return filled, done, ("these contract codes are not contracts, so their months were not priced: "
+                              + "; ".join(bad_all) + ". They come from a CIF paste without its letter column — re-paste "
+                              "the CIF table with its contract letters, or use ↺ Reset inputs to seed, then pull again.")
     return filled, done, None
 
 
@@ -3854,6 +3869,10 @@ def _futures_issues(as_of):
         active = (st.session_state.get(f"contracts_{commodity}")
                   or list(M.CONTRACTS[commodity]))
         curve = board.get(commodity) or {}
+        bad = _bad_contract_codes(active)
+        if bad:
+            issues.append(f"{commodity}: contract codes {', '.join(bad)} are not contracts (a CIF paste without its letter column) — "
+                          "re-paste the CIF table with its contract letters, or ↺ Reset inputs to seed")
         before = prev_fut.get(commodity) or {}
         priced = {m: _safe(df.loc[m, "Futures"]) for m in M.MONTHS}
         priced = {m: v for m, v in priced.items() if v is not None}
@@ -3918,12 +3937,11 @@ def render_inputs_tab(as_of):
             with st.spinner("Fetching the live CBOT board…" if live
                             else f"Fetching CBOT settlements for {as_of:%m/%d}…"):
                 n, done, err = _pull_massive_futures(as_of)
+            src = "the live board" if live else f"{as_of:%m/%d}'s settlement"
             st.session_state["massive_pull_msg"] = (
-                ("error", f"Massive pull failed: {err}") if err else
-                ("ok", f"✓ Filled {n} CBOT values ({', '.join(done)}) from "
-                       + ("the live board" if live else f"{as_of:%m/%d}'s settlement")
-                       + ". Review and Save to archive."))
-            if not err:
+                ("error", (f"Filled {n} CBOT values from {src}, but " if n else "Massive pull failed: ") + err) if err else
+                ("ok", f"✓ Filled {n} CBOT values ({', '.join(done)}) from {src}. Review and Save to archive."))
+            if n:                                   # show whatever did fill, even when part of the pull could not
                 st.session_state.pop("save_futures_issues", None)
                 _bump_editors()
             st.rerun()

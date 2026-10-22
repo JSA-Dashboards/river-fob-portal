@@ -321,7 +321,13 @@ Because that paste saved first, the email import skipped the day by design.
   - months with no CBOT price;
   - for today's sheet only, any contract more than `STALE_FUTURES_PCT` (3%) from
     the live Massive board (`_live_cbot_board`, cached 5 min);
-  - a CBOT row identical to the previous archived sheet's (added 2026-10-15).
+  - a CBOT row identical to the previous archived sheet's (added 2026-10-15);
+  - contract codes that are not contracts (added 2026-10-21, `_bad_contract_codes`). A CIF paste with no letter column used to
+    take the next cell's number as the contract, and the 10/20 sheet was SAVED with Corn codes C103, C109 … (the soybean CIF
+    values). Every later working sheet started from it, so the 🔄 Massive pull failed with "'3'" for two days, and 10/21 went
+    in with 10/20's futures (Save anyway). Fixed three ways: `parse_cif` keeps only real codes, the pull prices the other
+    commodities and names the bad codes, and Save refuses them. The 10/20 codes and 10/21 futures were repaired that evening
+    (10/21 = Massive's 10/21 settlement; JSON backups in the session scratchpad).
 - **What the user sees:** nothing is saved, and a warning offers **Save anyway**
   or **Cancel**. This sits on top of the existing CIF/freight review checkbox
   (`_save_guard`).
