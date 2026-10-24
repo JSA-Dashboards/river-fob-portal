@@ -1,4 +1,5 @@
-streamlit>=1.36
+# >= 1.51: the 🛳 Vessel Lineup tab's Copy buttons are CCv2 components (st.components.v2)
+streamlit>=1.51
 pandas>=2.0
 altair>=5.0
 # Changes-table PNGs render via plotly + kaleido. On Streamlit Cloud (headless

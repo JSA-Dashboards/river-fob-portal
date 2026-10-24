@@ -109,6 +109,28 @@ Scheduled jobs for this portal now (as of 2026-10-04):
 
 The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
 
+## 🛳 Vessel Lineup tab — a mirror (2026-10-24)
+
+Kolten: "add a tab ... just mirroring the summary tab of the vessel line up dashboard". The tab (after 🚢 FOB Vessel, in all three
+layouts incl. `?view=1`) is the standalone Vessel Line-up dashboard's **Summary page**, the same mirror the Global Export Dashboard
+carries (`corn-exporter-dashboard`):
+
+- `vessel_mirror/` is **GENERATED** — never edit it here. Re-sync from `corn-exporter-dashboard` (its private repo holds the tool):
+  `git -C ../vessel-lineup-dashboard fetch`, then `python sync_vessel_summary.py status --target ../river-fob-portal`, `apply --target
+  ../river-fob-portal`, `check --target ../river-fob-portal`. Re-sync BOTH apps when the source changes (the tool's docstring says
+  so). `MIRROR.json` records the source commit.
+- `vessel_tab.py` is the hand-written wrapper, the **same file** as the Global Export Dashboard's (keep them identical): data fetch,
+  Reload button (clears only the vessel caches), tile + table-watermark CSS scoped to `.st-key-vessel_summary`.
+- `render_vessel_lineup_tab()` in `app.py` imports `vessel_tab` lazily inside a fragment and never raises. The tabs are lazy, so the
+  page (cold ~12-25 s, +280-400 MB once drawn, per the GED measurements) costs nothing until someone opens it.
+- **Data:** facts.db (~18 MB) is downloaded from the standalone repo's GitHub copy at run time into the temp dir (ETag, 5-min cache),
+  never stored here. The CODE is pinned to a source commit but the DATA follows master: a renamed table the page reads would break
+  the tab until re-synced (the wrapper shows "Vessel Lineup tab error").
+- **Tabs are now looked up by name** (`T = dict(zip(names, st.tabs(...)))`, `_lazy(T[name], render, ...)`), not `tabs[-n]`: adding a
+  tab no longer means renumbering three layouts.
+- `requirements.txt`: `streamlit>=1.51` (the page's Copy buttons are CCv2 components). The page uses `px.bar/line/area/scatter`,
+  checked under this repo's `plotly<6` pin (5.24.1) as well as 6.x.
+
 ## Paste parser: the Ceres barge freight table (2026-10-21)
 
 `paste_parse.parse_freight` reads two freight layouts: the older single-header one (ILL / OHIO / MM / CITIES / STL / MTCT) and, since

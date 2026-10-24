@@ -4489,104 +4489,83 @@ def render_netcarry_tab():
                    "Try another commodity, location or date.")
 
 
+@_fragment
+def render_vessel_lineup_tab():
+    """🛳 Vessel Lineup: the Vessel Line-up dashboard's Summary page, mirrored (Kolten 2026-10-24: "add a tab ... just mirroring
+    the summary tab of the vessel line up dashboard"). The page is vessel_mirror/, GENERATED from JSA-Dashboards/
+    jsa-vessel-lineup-dashboard by corn-exporter-dashboard's `sync_vessel_summary.py --target ../river-fob-portal` (never edit it
+    here); vessel_tab.py is the wrapper, the same file as the Global Export Dashboard's. Imported only when the tab is opened (the
+    tabs are lazy), so it costs nothing until then. A fragment: its own toggles rerun only this tab. Never raises."""
+    try:
+        import vessel_tab
+        vessel_tab.render()
+    except Exception as e:
+        st.error(f"Vessel Lineup tab error: {e}")
+
+
+VESSEL_LINEUP_TAB = "🛳 Vessel Lineup"
+
+
+def _lazy(tab, render, *args, **kwargs):
+    """Draw a tab's content only while it is the open one (the tabs are st.tabs(on_change="rerun"))."""
+    with tab:
+        if tab.open:
+            render(*args, **kwargs)
+
+
+# Tabs are looked up by NAME, not position: inserting one (🛳 Vessel Lineup, 2026-10-24) used to mean renumbering every
+# tabs[-n] after it, in three layouts.
 if VIEW_ONLY:
     if not HIST_DATE or hist_cif is None:
         st.info("No archived data available to view yet.")
     else:
-        tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
-                       + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                          "🚢 FOB Vessel", "⚓ Barge Data"], on_change="rerun")
-        with tabs[0]:
-            if tabs[0].open:
-                render_changes_tab(view_date, cur=(hist_cif, hist_frt),
-                                   allow_download=False)
-        for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
-            with tab:
-                if tab.open:
-                    _render_archived_commodity(commodity)
-        with tabs[1 + len(M.COMMODITIES)]:          # 💵 Net Carry sits right after the commodity sheets
-            if tabs[1 + len(M.COMMODITIES)].open:
-                render_netcarry_tab()
-        with tabs[-5]:
-            if tabs[-5].open:
-                render_seasonal_tab()
-        with tabs[-4]:
-            if tabs[-4].open:
-                render_cashdel_tab()
-        with tabs[-3]:
-            if tabs[-3].open:
-                render_riverbids_tab()
-        with tabs[-2]:
-            if tabs[-2].open:
-                render_fob_vessel_tab()
-        with tabs[-1]:
-            if tabs[-1].open:
-                render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt),
-                                           allow_download=False)
+        _names = (["📊 Changes"] + list(M.COMMODITIES)
+                  + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
+                     "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "⚓ Barge Data"])
+        T = dict(zip(_names, st.tabs(_names, on_change="rerun")))
+        _lazy(T["📊 Changes"], render_changes_tab, view_date, cur=(hist_cif, hist_frt), allow_download=False)
+        for commodity in M.COMMODITIES:
+            _lazy(T[commodity], _render_archived_commodity, commodity)
+        _lazy(T["💵 Net Carry"], render_netcarry_tab)          # 💵 Net Carry sits right after the commodity sheets
+        _lazy(T["📈 Seasonal"], render_seasonal_tab)
+        _lazy(T["💵 Cash vs Del"], render_cashdel_tab)
+        _lazy(T["🛥 River Bids"], render_riverbids_tab)
+        _lazy(T["🚢 FOB Vessel"], render_fob_vessel_tab)
+        _lazy(T[VESSEL_LINEUP_TAB], render_vessel_lineup_tab)
+        _lazy(T["⚓ Barge Data"], render_barge_dashboard_tab, view_date, cur=(hist_cif, hist_frt), allow_download=False)
 elif HIST_DATE:
-    tabs = st.tabs(["📊 Changes"] + list(M.COMMODITIES)
-                   + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"], on_change="rerun")
-    with tabs[0]:
-        if tabs[0].open:
-            render_changes_tab(view_date, cur=(hist_cif, hist_frt))
-    with tabs[1 + len(M.COMMODITIES)]:              # 💵 Net Carry sits right after the commodity sheets
-        if tabs[1 + len(M.COMMODITIES)].open:
-            render_netcarry_tab()
-    with tabs[-6]:
-        if tabs[-6].open:
-            render_seasonal_tab()
-    with tabs[-5]:
-        if tabs[-5].open:
-            render_cashdel_tab()
-    with tabs[-4]:
-        if tabs[-4].open:
-            render_riverbids_tab()
-    with tabs[-3]:
-        if tabs[-3].open:
-            render_fob_vessel_tab()
-    with tabs[-2]:
-        if tabs[-2].open:
-            render_export_tab()
-    with tabs[-1]:
-        if tabs[-1].open:
-            render_barge_dashboard_tab(view_date, cur=(hist_cif, hist_frt))
-    for tab, commodity in zip(tabs[1:1 + len(M.COMMODITIES)], M.COMMODITIES):
-        with tab:
-            if tab.open:
-                _render_archived_commodity(commodity)
+    _names = (["📊 Changes"] + list(M.COMMODITIES)
+              + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
+                 "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "📤 Export", "⚓ Barge Data"])
+    T = dict(zip(_names, st.tabs(_names, on_change="rerun")))
+    _lazy(T["📊 Changes"], render_changes_tab, view_date, cur=(hist_cif, hist_frt))
+    _lazy(T["💵 Net Carry"], render_netcarry_tab)              # 💵 Net Carry sits right after the commodity sheets
+    _lazy(T["📈 Seasonal"], render_seasonal_tab)
+    _lazy(T["💵 Cash vs Del"], render_cashdel_tab)
+    _lazy(T["🛥 River Bids"], render_riverbids_tab)
+    _lazy(T["🚢 FOB Vessel"], render_fob_vessel_tab)
+    _lazy(T[VESSEL_LINEUP_TAB], render_vessel_lineup_tab)
+    _lazy(T["📤 Export"], render_export_tab)
+    _lazy(T["⚓ Barge Data"], render_barge_dashboard_tab, view_date, cur=(hist_cif, hist_frt))
+    for commodity in M.COMMODITIES:
+        _lazy(T[commodity], _render_archived_commodity, commodity)
 else:
-    tabs = st.tabs(["📊 Changes", "📝 Inputs"] + M.COMMODITIES
-                   + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                      "🚢 FOB Vessel", "📤 Export", "⚓ Barge Data"], on_change="rerun")
-    with tabs[0]:
-        if tabs[0].open:
-            render_changes_tab(as_of)
-    with tabs[1]:
-        if tabs[1].open:
-            render_inputs_tab(as_of)
-    with tabs[2 + len(M.COMMODITIES)]:              # 💵 Net Carry sits right after the commodity sheets
-        if tabs[2 + len(M.COMMODITIES)].open:
-            render_netcarry_tab()
-    with tabs[-6]:
-        if tabs[-6].open:
-            render_seasonal_tab()
-    with tabs[-5]:
-        if tabs[-5].open:
-            render_cashdel_tab()
-    with tabs[-4]:
-        if tabs[-4].open:
-            render_riverbids_tab()
-    with tabs[-3]:
-        if tabs[-3].open:
-            render_fob_vessel_tab()
-    with tabs[-2]:
-        if tabs[-2].open:
-            render_export_tab()
-    with tabs[-1]:
-        if tabs[-1].open:
-            render_barge_dashboard_tab(as_of)
-    for tab, commodity in zip(tabs[2:2 + len(M.COMMODITIES)], M.COMMODITIES):
+    _names = (["📊 Changes", "📝 Inputs"] + list(M.COMMODITIES)
+              + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
+                 "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "📤 Export", "⚓ Barge Data"])
+    T = dict(zip(_names, st.tabs(_names, on_change="rerun")))
+    _lazy(T["📊 Changes"], render_changes_tab, as_of)
+    _lazy(T["📝 Inputs"], render_inputs_tab, as_of)
+    _lazy(T["💵 Net Carry"], render_netcarry_tab)              # 💵 Net Carry sits right after the commodity sheets
+    _lazy(T["📈 Seasonal"], render_seasonal_tab)
+    _lazy(T["💵 Cash vs Del"], render_cashdel_tab)
+    _lazy(T["🛥 River Bids"], render_riverbids_tab)
+    _lazy(T["🚢 FOB Vessel"], render_fob_vessel_tab)
+    _lazy(T[VESSEL_LINEUP_TAB], render_vessel_lineup_tab)
+    _lazy(T["📤 Export"], render_export_tab)
+    _lazy(T["⚓ Barge Data"], render_barge_dashboard_tab, as_of)
+    for commodity in M.COMMODITIES:
+        tab = T[commodity]
         with tab:
             if tab.open:
                 df = st.session_state[f"cif_{commodity}"]

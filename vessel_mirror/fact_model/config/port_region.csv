@@ -1,0 +1,51 @@
+port,region,country,fgis_port,aliases,note
+South Louisiana,US Gulf,US,MISSISSIPPI R.,,Lower Miss. Reserve/Destrehan/Ama/Convent; grouped by trade-recognised port
+New Orleans,US Gulf,US,MISSISSIPPI R.,,
+Plaquemines,US Gulf,US,MISSISSIPPI R.,,
+Baton Rouge,US Gulf,US,MISSISSIPPI R.,,
+Portland,PNW,US,COLUMBIA R.,,
+Vancouver WA,PNW,US,COLUMBIA R.,,
+Kalama,PNW,US,COLUMBIA R.,,
+Longview,PNW,US,COLUMBIA R.,,
+Tacoma,PNW,US,PUGET SOUND,,
+Seattle,PNW,US,PUGET SOUND,,
+Grays Harbor,PNW,US,PUGET SOUND,,
+Houston,Texas Gulf,US,N. TEXAS,,
+Corpus Christi,Texas Gulf,US,S. TEXAS,,
+Galveston,Texas Gulf,US,N. TEXAS,,
+Brownsville,Texas Gulf,US,S. TEXAS,,
+Itaqui,Brazil North Arc,BR,,,
+Barcarena,Brazil North Arc,BR,,,
+Santarem,Brazil North Arc,BR,,,
+Santana,Brazil North Arc,BR,,,
+Itacoatiara,Brazil North Arc,BR,,,
+Santos,Brazil South/Southeast,BR,,,
+Paranagua,Brazil South/Southeast,BR,,PRANAGUA,Source typo PRANAGUA seen in some APS files
+Rio Grande,Brazil South/Southeast,BR,,,
+Sao Francisco,Brazil South/Southeast,BR,,SO FRANCISCO|SAO FRANCISCO DO SUL,Parser drops the accented char (S?O); alias covers it
+Tubarao,Brazil South/Southeast,BR,,TUBARO|VITORIA,Parser drops the accented char
+Aratu,Brazil South/Southeast,BR,,,Bahia; placed in South/Southeast per spec
+Sao Sebastiao,Brazil South/Southeast,BR,,SO SEBASTIO,Parser drops the accented chars
+Imbituba,Brazil South/Southeast,BR,,,Santa Catarina
+Antonina,Brazil South/Southeast,BR,,,Parana (Paranagua bay)
+Ilheus,Brazil South/Southeast,BR,,,Bahia; placed with Aratu per the spec's Bahia -> South/Southeast. Confirm
+Acu,Brazil South/Southeast,BR,,,"Porto do Acu, Rio de Janeiro. Confirm"
+San Lorenzo,Argentina Up-River,AR,,,"Gran Rosario hub (Timbues, Puerto San Martin)"
+Rosario,Argentina Up-River,AR,,,
+San Nicolas,Argentina Up-River,AR,,,
+Ramallo,Argentina Up-River,AR,,,
+Zarate,Argentina Up-River,AR,,,
+Campana,Argentina Up-River,AR,,,
+Diamante,Argentina Up-River,AR,,,
+Santa Fe,Argentina Up-River,AR,,,
+Concepcion del Uruguay,Argentina Up-River,AR,,,
+Ibicuy,Argentina Up-River,AR,,,
+Del Guazu,Argentina Up-River,AR,,,
+San Pedro,Argentina Up-River,AR,,,
+Bahia Blanca,Argentina South,AR,,,
+Necochea / Quequen,Argentina South,AR,,NECOCHEA / QUEQUEN|NECOCHEA|QUEQUEN,
+Montevideo,Uruguay,UY,,MONTEVIDEO(R.O.U),
+Nueva Palmira,Uruguay,UY,,NUEVA PALMIRA(R.O.U.),
+Lima,Argentina Up-River,AR,,,"Delta Dock Lima, Buenos Aires province (not Peru)"
+Villa Constitucion,Argentina Up-River,AR,,,
+Buenos Aires,Argentina Up-River,AR,,,"Buenos Aires city / Dock Sud terminals (mostly non-ag)"

@@ -1,0 +1,32 @@
+{
+ "commit": "10dc5e131d0daa039c703a9bf0e870641bb12b6b",
+ "commit_date": "2026-10-23T18:01:52-05:00",
+ "entry": "overview.page_summary(facts_db)",
+ "files": {
+  "__init__.py": "06cd1ad466c49a00b70941fc433e451192146e9e8554a2ed5f50d30868f3d5ee",
+  "assets/logo-50yr.png": "a3eadfab9db6854936464b2b63e956ec39fcc533b57610faded40c2877fbc8a4",
+  "copy_tools.py": "44587770baafd4a20e21a31f8d53c236ac479edeb6b6c46b46239e8e651f8be5",
+  "data_sync.py": "b269147eacf5d86bffedbd9ac50978b497f50104da7774a3cf53029cff511d65",
+  "fact_model/__init__.py": "2241da0b12c028025dfb6f00ae7ba59ac1e7318ff07554beae39612fdd9c63c5",
+  "fact_model/changes.py": "50195c17071334323a9ad480ae66fb98c1c93df7ddaaffdc503567eb668a635f",
+  "fact_model/combo_calibration.py": "1e130c82f0571944894cb12c66956797ebc7d19aeb8e4e7172a913574d374c50",
+  "fact_model/combos.py": "7d34e9a97513855ce98c13f6335ae3c6420de43eb477cdb67dec6f7868ef384c",
+  "fact_model/config/elevator_port.csv": "cae3eb124a524672ddb8345a69aae26c4527453c284560b78b9f0f646c7817b3",
+  "fact_model/config/forecast.csv": "3b15384cdb62fcd6443a29dd6c1afc5e0a67d3131a1c74b6c2d34a3c97106113",
+  "fact_model/config/marketing_year.csv": "022d3bf8b0e4cce5d04a9d13241bd8531f6166cde3d3b146e37ff11978b5c589",
+  "fact_model/config/port_region.csv": "2ae63148708a3f72613ed7f16e978be31de0ea1744653d5e41366f45d535e114",
+  "fact_model/config/regions.csv": "1b758eee6e6d487d360882ee94ca76ccda4ba1bd99aafa011b8bb6c5dc2148e7",
+  "fact_model/dimensions.py": "f84bda1e00276ee2119740c1cc7ff6b211bd3d2d95504a387de1f7882ce74de9",
+  "fact_model/executed.py": "6bc367522504dd09f53688346e8163b27fb04a5436479e286080beba4029e2c2",
+  "fact_model/fgis_fill.py": "668e1741a5904e6c626f778b04b5949a095c88da0c32d33da2657696bfc62ece",
+  "fact_model/lineup.py": "f83dac4b25d71a606063dbfa20ad3186a7e56b9f6da460ddc2572b73c8f6bc1e",
+  "fact_model/store.py": "58acabb9b364ec7a9d531388c5bdcd1b2247e2758813f8702d8f0f9aecab4607",
+  "overview.py": "83b0510be2aef93afe548140693e86984130a3f178b2fc6a4899b358b07d4929"
+ },
+ "generated_by": "sync_vessel_summary.py",
+ "source": "JSA-Dashboards/jsa-vessel-lineup-dashboard",
+ "transforms": [
+  "top-level imports made package-relative",
+  "display unit kMT written TMT"
+ ]
+}
