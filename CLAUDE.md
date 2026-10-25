@@ -128,7 +128,23 @@ carries (`corn-exporter-dashboard`):
   the tab until re-synced (the wrapper shows "Vessel Lineup tab error").
 - **Tabs are now looked up by name** (`T = dict(zip(names, st.tabs(...)))`, `_lazy(T[name], render, ...)`), not `tabs[-n]`: adding a
   tab no longer means renumbering three layouts.
-- `requirements.txt`: `streamlit>=1.51` (the page's Copy buttons are CCv2 components). The page uses `px.bar/line/area/scatter`,
+- `requirements.txt`: `streamlit>=1.51` (the page's Copy buttons are CCv2 components).
+- **Focused on USG, then PNW (2026-10-25).** Kolten: "most interested in the USG line up only followed by PNW. Can we focus the
+  filters and views on these?" The tab now draws `vessel_focus.py`, not the full page:
+  - USG is the Mississippi River export ports (South Louisiana, New Orleans, Plaquemines, Baton Rouge); PNW is the Columbia River
+    and Puget Sound.
+  - The tiles show each area's line-up now and its sailed month-to-date.
+  - The commodity snapshot has USG and PNW columns.
+  - USG gets its own section (open), then PNW (closed). Each has line-up by commodity, line-up by **terminal** (South Louisiana is
+    ~84% of USG's boats, so the port table says little), and sailed.
+  - The explorer is held to the US and to USG/PNW, and starts on USG.
+  - Texas Gulf, Brazil and Argentina are left out; they remain on the full page (GED and the standalone dashboard).
+  - **How it's built:** only from the mirror's own pieces (`overview._prepare`, `tile`, `show_change_table`, `port_table`,
+    `_sailed_table`, `lineup_view`, `sailed_view` ...), so the numbers match the full page. The tab still uses `vessel_tab.py` for the
+    styling, data fetch and Reload, and that file is still byte-identical to GED's.
+  - **Those are the mirror's internals:** after every re-sync, run `python tests/test_vessel_focus.py`. It also checks that USG/PNW
+    still select what the full page's `SCOPES` do.
+  - Widget keys start with `rfv_` (the admin portal shares one session state across both pages). The page uses `px.bar/line/area/scatter`,
   checked under this repo's `plotly<6` pin (5.24.1) as well as 6.x.
 
 ## 📦 Deliverable Stocks (2026-10-24)

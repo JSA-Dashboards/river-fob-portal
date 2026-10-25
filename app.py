@@ -4642,11 +4642,13 @@ def render_vessel_lineup_tab():
     """🛳 Vessel Lineup: the Vessel Line-up dashboard's Summary page, mirrored (Kolten 2026-10-24: "add a tab ... just mirroring
     the summary tab of the vessel line up dashboard"). The page is vessel_mirror/, GENERATED from JSA-Dashboards/
     jsa-vessel-lineup-dashboard by corn-exporter-dashboard's `sync_vessel_summary.py --target ../river-fob-portal` (never edit it
-    here); vessel_tab.py is the wrapper, the same file as the Global Export Dashboard's. Imported only when the tab is opened (the
-    tabs are lazy), so it costs nothing until then. A fragment: its own toggles rerun only this tab. Never raises."""
+    here); vessel_tab.py is the wrapper, the same file as the Global Export Dashboard's. Since 2026-10-25 the tab draws
+    vessel_focus.py instead of the full page: the US Gulf first, then the PNW, built from the same pieces (Kolten: "most
+    interested in the USG line up only followed by PNW"). Imported only when the tab is opened (the tabs are lazy), so it costs
+    nothing until then. A fragment: its own toggles rerun only this tab. Never raises."""
     try:
-        import vessel_tab
-        vessel_tab.render()
+        import vessel_focus
+        vessel_focus.render()
     except Exception as e:
         st.error(f"Vessel Lineup tab error: {e}")
 
