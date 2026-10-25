@@ -34,6 +34,7 @@ import bids_data
 import river_segments as RS
 import delivery_period as DP
 import fob_vessel
+import deliverable_stocks as DS
 import massive_futures
 import barge_flows as BF
 from zoneinfo import ZoneInfo
@@ -1934,6 +1935,12 @@ def cashdel_frame(commodity, cash_c, _sig):
 
 
 def render_cashdel_tab():
+    """💵 Cash vs Del: the Cash vs Delivery chart, then 📦 Deliverable Stocks under it (each draws even if the other has no data)."""
+    _render_cashdel_chart()
+    render_deliverable_stocks()
+
+
+def _render_cashdel_chart():
     st.markdown("### 💵 Cash vs Delivery — by delivery month")
     dates = db.list_dates()
     if not dates:
@@ -2004,6 +2011,148 @@ def render_cashdel_tab():
     st.caption(f"Cash vs Delivery at **{loc}** for each active delivery contract · "
                f"¢/bu · {keep[0]:%b %d, %Y} – {keep[-1]:%b %d, %Y} · weekly · cash "
                f"distance from DVE = {cash_c * 100:.0f}¢ (current value across history).")
+
+
+# ── 📦 Deliverable Stocks (Kolten 2026-10-21/24) ───────────────────────────────────────────────────────────────────────────
+# CBOT corn and soybean stocks in deliverable positions, weekly, as the AgMarket "Visible Stox in Dlv Space" charts show them:
+# one line per year on a Jan-Dec axis, the current year thick red, the prior five years' average dotted. Typed in on this tab
+# (editors only) from CME's Tuesday "Stocks of Grain" report — CME's terms bar pulling it automatically (deliverable_stocks.py);
+# 2020 to mid-June 2026 came from the old FOB Sheet workbook (import_deliverable_stocks.py).
+DS_TITLES = {"Soybeans": "Soybean Visible Stox in Dlv Space", "Corn": "Visible Corn Stox in Dlv Space"}
+DS_PAST_COLORS = ["#1f5fa8", "#ed7d31", "#2e7d32", "#5ab4e5", "#7b3fa0", "#e08cc6", "#8c6d31"]    # oldest -> newest
+DS_CURRENT = "#e00000"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _ds_load():
+    """{commodity: {as_of date: thousand bu}} from the archive, cached 10 min (a save clears it)."""
+    return DS.load_all()
+
+
+def _ds_chart(commodity, series, current):
+    """The AgMarket-style chart for one commodity, or None with no data."""
+    years = DS.chart_years(series, current)
+    if not years:
+        return None
+    avg_years = DS.average_years(series, current)
+    avg_label = f"Average [{avg_years[0]}-{avg_years[-1]}]" if len(avg_years) >= 3 else None
+    rows = [{"x": p["x"], "Series": str(p["year"]), "stocks": p["stocks"], "Week": p["date"].isoformat()}
+            for p in DS.season_points(series, years)]
+    if avg_label:
+        rows += [{"x": p["x"], "Series": avg_label, "stocks": p["stocks"], "Week": f"average of {p['n']} years"}
+                 for p in DS.average_points(series, avg_years)]
+    df = pd.DataFrame(rows)
+    df["x"] = pd.to_datetime(df["x"])
+    past = [str(y) for y in years if y != current]
+    domain = ([avg_label] if avg_label else []) + past + ([str(current)] if current in years else [])
+    colours = (["#111111"] if avg_label else []) + DS_PAST_COLORS[-len(past):] + ([DS_CURRENT] if current in years else [])
+    widths = [2.2 if s == avg_label else 4.0 if s == str(current) else 2.0 for s in domain]
+    dashes = [[3, 3] if s == avg_label else [1, 0] for s in domain]
+    chart = alt.Chart(df).mark_line(interpolate="monotone").encode(
+        x=alt.X("x:T", title=None, scale=alt.Scale(domain=[f"{DS.REF_YEAR}-01-01", f"{DS.REF_YEAR}-12-31"]),
+                axis=alt.Axis(format="%b", tickCount={"interval": "month", "step": 1}, labelColor="#333",
+                              labelFontWeight="bold", labelAngle=0, grid=False)),
+        y=alt.Y("stocks:Q", title="thousand bu", axis=alt.Axis(format=",.0f", labelColor="#333", titleColor="#64748b")),
+        color=alt.Color("Series:N", sort=domain, scale=alt.Scale(domain=domain, range=colours),
+                        legend=alt.Legend(orient="top", title=None, labelFontWeight="bold", symbolType="stroke",
+                                          symbolStrokeWidth=3, symbolSize=260)),
+        # strokeWidth, not size: size also scales the legend's symbols, down to dots
+        strokeWidth=alt.StrokeWidth("Series:N", scale=alt.Scale(domain=domain, range=widths), legend=None),
+        strokeDash=alt.StrokeDash("Series:N", scale=alt.Scale(domain=domain, range=dashes), legend=None),
+        order=alt.Order("Series:N"),
+        tooltip=[alt.Tooltip("Series:N", title="Year"), alt.Tooltip("Week:N"),
+                 alt.Tooltip("stocks:Q", format=",.0f", title="Thousand bu")])
+    return chart.properties(
+        height=330, background="transparent", padding={"left": 6, "right": 24, "top": 6, "bottom": 6},
+        autosize=alt.AutoSizeParams(type="fit", contains="padding"),
+        title=alt.TitleParams(DS_TITLES[commodity], color="#2e7d32", fontSize=18, fontWeight="bold", anchor="middle")
+    ).configure_view(strokeWidth=0, fill=None).configure_axis(gridColor="#ececec", domainColor="#cccccc"
+    ).configure_legend(labelColor="#333", labelFontSize=12)
+
+
+def _ds_entry(data):
+    """✏️ The weekly entry box (editors only): the as-of Friday, the two totals in thousand bushels, Save. It opens on the oldest
+    missing week, so the weeks since the history ends can be typed in one after another."""
+    newest = DS.newest_report_friday(_today())
+    missing = DS.missing_fridays(data, newest)
+    if "ds_asof_next" in st.session_state:                     # set by a save, applied before the date box exists
+        st.session_state["ds_asof"] = st.session_state.pop("ds_asof_next")
+    st.session_state.setdefault("ds_asof", missing[0] if missing else newest)
+    head = "✏️ Enter weekly stocks" + (f" — {len(missing)} week{'s' if len(missing) != 1 else ''} missing" if missing else "")
+    with st.expander(head, expanded=bool(missing)):
+        msg = st.session_state.pop("ds_msg", None)
+        if msg:
+            (st.success if msg[0] == "ok" else st.error)(msg[1])
+        st.caption("From CME's weekly **Stocks of Grain** report (stocks as of Friday, out the next Tuesday by noon CT): the "
+                   "**total** corn and soybean stocks in deliverable positions, in **thousand bushels** (17,852 = 17.9 million bu). "
+                   "Typing a week again replaces it.")
+        if missing:
+            shown = ", ".join(f"{d:%b} {d.day}" for d in missing[:12]) + (" …" if len(missing) > 12 else "")
+            st.caption(f"Missing weeks up to the newest report (Fri {newest:%b} {newest.day}): {shown}")
+        c1, c2, c3, c4 = st.columns([1.2, 1, 1, 0.9], vertical_alignment="bottom")
+        with c1:
+            d = st.date_input("Stocks as of (Friday)", key="ds_asof", max_value=newest + dt.timedelta(days=7))
+        have = {c: (data.get(c) or {}).get(d) for c in DS.COMMODITIES}
+        with c2:   # the cap only catches bushels typed where thousands belong (17,852,000 for 17,852)
+            corn = st.number_input("Corn (thousand bu)", min_value=0.0, max_value=1_000_000.0, step=1.0, format="%.0f",
+                                   value=have["Corn"], key=f"ds_corn_{d}")
+        with c3:
+            soy = st.number_input("Soybeans (thousand bu)", min_value=0.0, max_value=1_000_000.0, step=1.0, format="%.0f",
+                                  value=have["Soybeans"], key=f"ds_soy_{d}")
+        with c4:
+            save = st.button("💾 Save week", key="ds_save", width="stretch")
+        if save:
+            if not isinstance(d, dt.date):
+                st.session_state["ds_msg"] = ("err", "Pick the Friday the stocks are as of.")
+            elif d.weekday() != 4:
+                st.session_state["ds_msg"] = ("err", f"{d:%a %b} {d.day} is not a Friday: CME's report is as of Friday.")
+            elif corn is None and soy is None:
+                st.session_state["ds_msg"] = ("err", "Type at least one of the two totals.")
+            else:
+                rows = [(d, c, v, "manual") for c, v in (("Corn", corn), ("Soybeans", soy)) if v is not None]
+                try:
+                    DS.save(rows)
+                    _ds_load.clear()
+                    st.session_state["ds_msg"] = ("ok", f"Saved Fri {d:%b} {d.day}: "
+                                                  + ", ".join(f"{c} {v:,.0f}" for _d, c, v, _s in rows) + " thousand bu.")
+                    later = [m for m in missing if m > d]
+                    if later:
+                        st.session_state["ds_asof_next"] = later[0]
+                except Exception as e:                           # noqa: BLE001 — say so, keep the page
+                    st.session_state["ds_msg"] = ("err", f"Couldn't save ({type(e).__name__}: {e}).")
+            st.rerun()
+
+
+def render_deliverable_stocks():
+    """📦 Deliverable Stocks, under the Cash vs Delivery chart: the two charts (soybeans, corn), then the entry box (editors only).
+    Never raises."""
+    st.markdown("### 📦 Deliverable Stocks")
+    try:
+        data = _ds_load()
+    except Exception as e:                                       # noqa: BLE001
+        st.warning(f"Deliverable stocks couldn't be read ({type(e).__name__}: {e}).")
+        return
+    current = _today().year
+    drew = False
+    for commodity in ("Soybeans", "Corn"):
+        series = data.get(commodity) or {}
+        chart = _ds_chart(commodity, series, current) if series else None
+        if chart is None:
+            continue
+        drew = True
+        snap = f"snap_ds_{commodity}"
+        _snap_anchor(snap)
+        st.altair_chart(chart, width="stretch")
+        _snap_toolbar(snap, f"{DS_TITLES[commodity]} {_today():%m-%d-%y}")
+    if drew:
+        latest = ", ".join(f"{c} {max(s):%b} {max(s).day}, {max(s).year}" for c, s in sorted(data.items()) if s)
+        st.caption("Thousand bushels · CBOT corn and soybean stocks in deliverable positions, as of each Friday (CME Group's weekly "
+                   f"Stocks of Grain report) · latest week: {latest} · 2020 to mid-June 2026 from the JSA FOB Sheet workbook, "
+                   "typed in weekly since.")
+    else:
+        st.info("No deliverable stocks entered yet.")
+    if not VIEW_ONLY:
+        _ds_entry(data)
 
 
 _VESSEL_SBY_KEY = {s["key"]: s for s in fob_vessel.SERIES}

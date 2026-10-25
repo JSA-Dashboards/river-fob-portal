@@ -131,6 +131,34 @@ carries (`corn-exporter-dashboard`):
 - `requirements.txt`: `streamlit>=1.51` (the page's Copy buttons are CCv2 components). The page uses `px.bar/line/area/scatter`,
   checked under this repo's `plotly<6` pin (5.24.1) as well as 6.x.
 
+## 📦 Deliverable Stocks (2026-10-24)
+
+Kolten: "add these as a tab ... Call it Deliverable Stocks ... put it on the cash vs DVE tab ... below the cash vs DVE chart"; "start from
+the August copy". The 💵 Cash vs Del tab draws the Cash vs Delivery chart, then two AgMarket-style charts: **Soybean / Corn Visible Stox in
+Dlv Space** (CBOT stocks in deliverable positions, thousand bu, as of each Friday). One line per year on a Jan-Dec axis, the last six
+years plus the current one thick red, and a dotted **Average [prior five years]**. All three layouts, `?view=1` included (charts only).
+
+- **No scraper, on purpose.** CME's Data Terms of Use bar scripts that retrieve or harvest cmegroup.com, and compiling or redistributing
+  its data, without written consent. JSA's DataMine licence (LIC-A174271) does not include Stocks of Grain. So editors type each week in
+  the **✏️ Enter weekly stocks** box under the charts (hidden in `?view=1`): the Friday, the two totals, 💾 Save week. It opens on the
+  oldest missing week and steps to the next one after a save. A week saved again replaces the old entry. The report is out on Tuesday
+  by noon CT, so the newest week it expects is the Friday on or before today - 4 days.
+- **Storage:** table `deliverable_stocks` in RIVER_FOB.PUBLIC, one row per (as_of Friday, commodity): stocks in thousand bu, plus a
+  source: `workbook`, `manual`, or `datamine` for a future licensed job. `deliverable_stocks.py` holds the storage and the pure chart
+  helpers. The table is owned by ACCOUNTADMIN, like `save_lock`. The schema's future grants give RIVER_FOB_ROLE
+  SELECT/INSERT/UPDATE/DELETE, and the admin portal's ADMIN_PORTAL_ROLE inherits that role.
+- **History:** `import_deliverable_stocks.py` loaded the old workbook's 'Deliverable Stox' tab (JSA FOB Sheet - August 2026.xlsx) on
+  2026-10-24: 673 rows. Corn runs 2020-01-03 .. 2026-06-19, soybeans 2020-01-03 .. 2026-06-12.
+  - The workbook lines past years up by ROW (the k-th Friday of each year), so a past year's date can be up to a week off its real
+    report. That's fine for a seasonal chart.
+  - It is safe to re-run: by default it keeps rows typed in the app (`--overwrite-manual` replaces them).
+  - Everything after mid-June 2026 has to be typed in.
+- **The average lines years up by the k-th Friday too, not the ISO week.** ISO weeks put a Jan 1 Friday (2021) in the previous year's
+  week 53 and shift that whole year by a week. This was caught by the test.
+- **Altair trap:** the line widths use `strokeWidth`, not `size`. `size` also scales the legend's symbols, down to unreadable dots.
+- Tests: `python tests/test_deliverable_stocks.py` covers the dates, the chart series, a synthetic copy of the workbook tab, and a
+  save/load round trip on a temp SQLite file.
+
 ## Paste parser: the Ceres barge freight table (2026-10-21)
 
 `paste_parse.parse_freight` reads two freight layouts: the older single-header one (ILL / OHIO / MM / CITIES / STL / MTCT) and, since
