@@ -2124,33 +2124,32 @@ def _ds_entry(data):
 
 
 def render_deliverable_stocks():
-    """📦 Deliverable Stocks, under the Cash vs Delivery chart: the two charts (soybeans, corn), then the entry box (editors only).
-    Never raises."""
+    """📦 Deliverable Stocks, under the Cash vs Delivery chart: the chart for the commodity picked in the tab's Commodity box (Kolten
+    2026-10-25: "if its corn just show corn ... when beans are filtered switch to beans"), then the entry box (editors only, both
+    commodities: one report gives both). Never raises."""
     st.markdown("### 📦 Deliverable Stocks")
     try:
         data = _ds_load()
     except Exception as e:                                       # noqa: BLE001
         st.warning(f"Deliverable stocks couldn't be read ({type(e).__name__}: {e}).")
         return
-    current = _today().year
-    drew = False
-    for commodity in ("Soybeans", "Corn"):
-        series = data.get(commodity) or {}
-        chart = _ds_chart(commodity, series, current) if series else None
-        if chart is None:
-            continue
-        drew = True
-        snap = f"snap_ds_{commodity}"
-        _snap_anchor(snap)
-        st.altair_chart(chart, width="stretch")
-        _snap_toolbar(snap, f"{DS_TITLES[commodity]} {_today():%m-%d-%y}")
-    if drew:
-        latest = ", ".join(f"{c} {max(s):%b} {max(s).day}, {max(s).year}" for c, s in sorted(data.items()) if s)
-        st.caption("Thousand bushels · CBOT corn and soybean stocks in deliverable positions, as of each Friday (CME Group's weekly "
-                   f"Stocks of Grain report) · latest week: {latest} · 2020 to mid-June 2026 from the JSA FOB Sheet workbook, "
-                   "typed in weekly since.")
+    commodity = st.session_state.get("cashdel_commodity", "Corn")
+    if commodity not in DS_TITLES:
+        st.info("Deliverable stocks are tracked for corn and soybeans only — pick one of them above to see its chart.")
     else:
-        st.info("No deliverable stocks entered yet.")
+        series = data.get(commodity) or {}
+        chart = _ds_chart(commodity, series, _today().year) if series else None
+        if chart is None:
+            st.info(f"No {commodity.lower()} deliverable stocks entered yet.")
+        else:
+            snap = f"snap_ds_{commodity}"
+            _snap_anchor(snap)
+            st.altair_chart(chart, width="stretch")
+            _snap_toolbar(snap, f"{DS_TITLES[commodity]} {_today():%m-%d-%y}")
+            last = max(series)
+            st.caption(f"Thousand bushels · CBOT {commodity.lower()} stocks in deliverable positions, as of each Friday (CME Group's "
+                       f"weekly Stocks of Grain report) · latest week: {last:%b} {last.day}, {last.year} · 2020 to mid-June 2026 from "
+                       "the JSA FOB Sheet workbook, typed in weekly since.")
     if not VIEW_ONLY:
         _ds_entry(data)
 

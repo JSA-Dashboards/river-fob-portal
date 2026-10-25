@@ -137,6 +137,8 @@ Kolten: "add these as a tab ... Call it Deliverable Stocks ... put it on the cas
 the August copy". The 💵 Cash vs Del tab draws the Cash vs Delivery chart, then two AgMarket-style charts: **Soybean / Corn Visible Stox in
 Dlv Space** (CBOT stocks in deliverable positions, thousand bu, as of each Friday). One line per year on a Jan-Dec axis, the last six
 years plus the current one thick red, and a dotted **Average [prior five years]**. All three layouts, `?view=1` included (charts only).
+**One chart at a time, following the tab's Commodity box** (`cashdel_commodity`; Kolten 2026-10-25: "if its corn just show corn ... when
+beans are filtered switch to beans"); Wheat shows a note (no stocks history). The entry box still takes both totals, since one report gives both.
 
 - **No scraper, on purpose.** CME's Data Terms of Use bar scripts that retrieve or harvest cmegroup.com, and compiling or redistributing
   its data, without written consent. JSA's DataMine licence (LIC-A174271) does not include Stocks of Grain. So editors type each week in
