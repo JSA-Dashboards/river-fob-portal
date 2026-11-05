@@ -1,5 +1,6 @@
-"""River FOB client API (client_api/): keys, the 12-month window, the numbers, the formats, the refusals, the rate limit,
-the access log and a Snowflake outage. Synthetic sheets, a temp keys file; no Snowflake, no network.
+"""River FOB client API (client_api/) and its key management (api_admin.py, the 🔑 API tab): keys made and revoked in the
+tab and checked by the server, the 12-month window, the numbers, the formats, the refusals, the rate limit, the call log
+and a Snowflake outage. Synthetic sheets; a throwaway SQLite stands in for RIVER_FOB.API_ADMIN. No Snowflake, no network.
 
     python tests/test_client_api.py
 """
@@ -13,11 +14,13 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 TMP = tempfile.mkdtemp()
-os.environ["API_KEYS_FILE"] = os.path.join(TMP, "keys.json")       # before the import: never touch a real keys file
-os.environ["API_WARM"] = "0"                                        # the module's own app must not try Snowflake
+os.environ["API_WARM"] = "0"                                        # before the import: the module's own app must not start
+
+import sqlite3                                # noqa: E402
 
 from fastapi.testclient import TestClient    # noqa: E402
 
+import api_admin                              # noqa: E402
 import fob_model as M                         # noqa: E402
 from client_api import app as A, auth, data   # noqa: E402
 
@@ -81,13 +84,40 @@ check("an older sheet's Spot column = the sheet's own month, flagged spot (freig
       sf["Spot"]["delivery_month"] == "2025-11" and sf["Spot"]["spot"] and sf["Nov"]["delivery_month"] == "2025-11"
       and not sf["Nov"]["spot"], sf)
 
-print("\napi: keys")
-store = auth.KeyStore(os.environ["API_KEYS_FILE"])
-KEY, rec = store.create("Pilot Client", "test")
-OTHER, rec2 = store.create("Other Client")
-raw_file = open(os.environ["API_KEYS_FILE"]).read()
-check("the keys file holds hashes, never the key", KEY not in raw_file and auth.key_hash(KEY) in raw_file)
+print("\nkeys: made in the 🔑 API tab (api_admin), checked by the server (auth.KeyStore)")
+# A throwaway SQLite stands in for RIVER_FOB.API_ADMIN (same columns as client_api/sql/setup.sql step 1b).
+DB = sqlite3.connect(os.path.join(TMP, "api_admin.db"), check_same_thread=False)
+DB.executescript("""
+CREATE TABLE api_keys (key_id TEXT PRIMARY KEY, client TEXT NOT NULL, key_hash TEXT NOT NULL, key_hint TEXT, note TEXT,
+                       created_at TEXT NOT NULL, created_by TEXT, active BOOLEAN NOT NULL DEFAULT 1, revoked_at TEXT, revoked_by TEXT);
+CREATE TABLE api_calls (ts TEXT, key_id TEXT, client TEXT, path TEXT, query TEXT, status INTEGER, rows_n INTEGER, ms INTEGER, ip TEXT);
+""")
+T = {"keys_table": "api_keys"}
+KEY, rec = api_admin.create_key(DB, "?", "Hertshten", "pilot", **T)
+OTHER, rec2 = api_admin.create_key(DB, "?", "Other Client", **T)
+stored = DB.execute("SELECT * FROM api_keys").fetchall()
+check("the table holds the hash and a 9-character hint, never the key", KEY not in str(stored)
+      and auth.key_hash(KEY) in str(stored) and rec["key_hint"] == KEY[:9], stored[0])
 check("a key is rfob_ + 43 random characters (256 bits)", KEY.startswith("rfob_") and len(KEY) == 48, len(KEY))
+check("the tab and the server hash keys the same way", all(api_admin.key_hash(k) == auth.key_hash(k)
+                                                             for k in (KEY, OTHER, "rfob_x")))
+try:
+    api_admin.create_key(DB, "?", "  ", **T)
+    check("a key needs a client name", False)
+except ValueError:
+    check("a key needs a client name", True)
+
+kclock = {"now": 0.0}
+key_reads = []
+
+
+def active_keys():                                                    # what RIVER_FOB.API_ADMIN.ACTIVE_KEYS returns
+    key_reads.append(1)
+    return [{"key_id": a, "client": b, "key_hash": c}
+            for a, b, c in DB.execute("SELECT key_id, client, key_hash FROM api_keys WHERE active").fetchall()]
+
+
+store = auth.KeyStore(fetch=active_keys, clock=lambda: kclock["now"])
 LOG = os.path.join(TMP, "access.log")
 fetches = []
 
@@ -98,21 +128,50 @@ def fetch():
 
 
 lim = auth.RateLimiter(per_min=1000, per_day=100000)
+CALLS = auth.CallLog(write=lambda rows: None, start=False)
 api = TestClient(A.create_app(store=store, loader=data.Loader(fetch=fetch, today=lambda: TODAY), limiter=lim,
-                              access_log=LOG, today=lambda: TODAY))
+                              access_log=LOG, today=lambda: TODAY, calls=CALLS))
 H = {"X-API-Key": KEY}
 check("health needs no key", api.get("/v1/health").json() == {"status": "ok"})
 check("no key -> 401", api.get("/v1/cif").status_code == 401)
 check("a wrong key -> 401", api.get("/v1/cif", headers={"X-API-Key": "rfob_" + "x" * 43}).status_code == 401)
 check("a key in the URL is not accepted (401)", api.get(f"/v1/cif?key={KEY}").status_code == 401)
 check("the right key -> 200", api.get("/v1/cif", headers=H).status_code == 200)
+check("both keys work", api.get("/v1/dates", headers={"X-API-Key": OTHER}).status_code == 200)
 check("no docs, no OpenAPI page", api.get("/docs").status_code == 404 and api.get("/openapi.json").status_code == 404)
-store.revoke(rec2["id"])
-time.sleep(0.05)
-check("a revoked key -> 401 at once, no restart", api.get("/v1/cif", headers={"X-API-Key": OTHER}).status_code == 401)
+check("one key read served all of that (cached)", len(key_reads) == 1, len(key_reads))
 r = api.get("/v1/cif", headers=H)
 check("security headers on every answer", r.headers.get("x-content-type-options") == "nosniff"
       and r.headers.get("cache-control") == "no-store")
+
+check("revoke in the tab", api_admin.revoke_key(DB, "?", rec2["key_id"], **T)
+      and not api_admin.revoke_key(DB, "?", rec2["key_id"], **T))
+kclock["now"] = 30
+check("within the first minute the server still has the old list (the revoke lands within ~1 min)",
+      api.get("/v1/dates", headers={"X-API-Key": OTHER}).status_code == 200)
+kclock["now"] = 90                                                    # past REFRESH_S: answered from cache, re-read behind it
+api.get("/v1/dates", headers=H)
+for _ in range(100):
+    if not store._busy:
+        break
+    time.sleep(0.01)
+check("past a minute, a call triggers a background re-read; after it, the revoked key -> 401",
+      api.get("/v1/dates", headers={"X-API-Key": OTHER}).status_code == 401 and len(key_reads) == 2, len(key_reads))
+OTHER2, rec3 = api_admin.create_key(DB, "?", "Other Client", "replacement", **T)
+kclock["now"] = 90 + 301                                              # a quiet five minutes: re-read BEFORE answering
+check("after a quiet spell a new key works on its very first call (re-read before answering)",
+      api.get("/v1/dates", headers={"X-API-Key": OTHER2}).status_code == 200)
+api_admin.revoke_key(DB, "?", rec3["key_id"], **T)
+kclock["now"] += 301
+check("... and a key revoked during a quiet spell is refused on its first call", api.get(
+    "/v1/dates", headers={"X-API-Key": OTHER2}).status_code == 401)
+dead = auth.KeyStore(fetch=active_keys, clock=lambda: kclock["now"])
+check("a fresh store reads the keys once", dead.verify(KEY) is not None)
+dead.fetch = lambda: (_ for _ in ()).throw(RuntimeError("snowflake down"))
+kclock["now"] += 3600
+check("Snowflake down: keys keep working from the last list for a while", dead.verify(KEY) is not None)
+kclock["now"] += 86400
+check("but after a day with no successful re-read, every key is refused (fail closed)", dead.verify(KEY) is None)
 
 print("\napi: data")
 j = api.get("/v1/cif", headers=H).json()
@@ -215,15 +274,55 @@ r = cold.get("/v1/dates", headers=H)
 check("nothing loaded yet and Snowflake down -> 503, no internals", r.status_code == 503 and "snowflake" not in r.text.lower(),
       (r.status_code, r.text))
 
-print("\napi: the access log")
+print("\napi: the access log (on the server)")
 recs = [json.loads(x) for x in open(LOG, encoding="utf-8")]
 ok = [x for x in recs if x["status"] == 200 and x["path"] == "/v1/fob"]
-check("each call logged with key id, client, path, status, rows, ms", ok and ok[0]["key"] == rec["id"]
-      and ok[0]["client"] == "Pilot Client" and isinstance(ok[0]["rows"], int) and "ms" in ok[0], ok[:1])
+check("each call logged with key id, client, path, status, rows, ms", ok and ok[0]["key"] == rec["key_id"]
+      and ok[0]["client"] == "Hertshten" and isinstance(ok[0]["rows"], int) and "ms" in ok[0], ok[:1])
 check("the key is never written to the log, even when a client puts it in the URL",
       KEY not in open(LOG, encoding="utf-8").read() and any(x["query"] == "key=***" for x in recs))
 check("our own parameters are logged as sent", any(x["query"] == "commodity=corn&location=hennepin,STL&start=2020-01-01" for x in recs))
 check("refused calls are logged too (401 with no key id)", any(x["status"] == 401 and x["key"] is None for x in recs))
+
+print("\ncalls: recorded for the 🔑 API tab")
+buffered = list(CALLS._buf)
+check("every call but /v1/health is buffered for Snowflake", buffered and not any(c["path"] == "/v1/health" for c in buffered)
+      and len(buffered) == sum(1 for x in recs if x["path"] != "/v1/health"), (len(buffered), len(recs)))
+check("with the API_CALLS columns, a UTC timestamp, and never the key", set(buffered[0]) == set(data.CALL_FIELDS)
+      and len(buffered[0]["ts"]) == 19 and KEY not in json.dumps(buffered), buffered[0])
+
+
+def to_sqlite(rows):
+    DB.executemany(f"INSERT INTO api_calls ({', '.join(data.CALL_FIELDS)}) VALUES ({', '.join('?' * len(data.CALL_FIELDS))})",
+                   [tuple(r[f] for f in data.CALL_FIELDS) for r in rows])
+    DB.commit()
+
+
+CALLS.write = to_sqlite
+n = CALLS.flush()
+check("a flush writes them all in one batch and empties the buffer", n == len(buffered) and not CALLS._buf
+      and DB.execute("SELECT COUNT(*) FROM api_calls").fetchone()[0] == n, n)
+check("an empty buffer writes nothing", CALLS.flush() == 0)
+bad = auth.CallLog(write=lambda rows: (_ for _ in ()).throw(RuntimeError("down")), start=False)
+bad.add({"ts": "x"})
+bad.add({"ts": "y"})
+check("a failed write keeps the rows for the next try, in order", bad.flush() == 0 and [r["ts"] for r in bad._buf] == ["x", "y"])
+cap = auth.CallLog(write=lambda rows: None, max_buffer=3, start=False)
+for i in range(5):
+    cap.add({"ts": str(i)})
+check("past the cap the oldest are dropped and counted", [r["ts"] for r in cap._buf] == ["2", "3", "4"] and cap.dropped == 2)
+
+C = {"calls_table": "api_calls"}
+keys = {k["key_id"]: k for k in api_admin.list_keys(DB, "?", keys_table="api_keys", **C)}
+h = keys[rec["key_id"]]
+check("the tab's key list: client, hint, status, last call, calls and rows in 30 days",
+      h["client"] == "Hertshten" and h["active"] and h["key_hint"] == KEY[:9] and h["last_call"] and h["calls_n"] > 5
+      and h["rows_total"] > 0 and not keys[rec2["key_id"]]["active"] and keys[rec2["key_id"]]["revoked_at"], h)
+rc = api_admin.recent_calls(DB, "?", client="Hertshten", **C)
+check("recent calls, one client's, newest first", rc and all(r["client"] == "Hertshten" for r in rc)
+      and rc == sorted(rc, key=lambda r: r["ts"], reverse=True), len(rc))
+du = api_admin.daily_usage(DB, "?", **C)
+check("daily usage by client, refused calls under '(no valid key)'", {"Hertshten", "(no valid key)"} <= {r["client"] for r in du}, du)
 
 print("\n" + ("ALL PASS" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"))
 sys.exit(1 if FAILS else 0)

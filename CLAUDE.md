@@ -168,11 +168,30 @@ it runs on its own droplet (`client_api/DEPLOY.md`) and its guide for the client
   - `RIVER_FOB_API_ROLE` has SELECT on those views and nothing else (plus USAGE on COMPUTE_WH).
   - Step 2 (user `RIVER_FOB_API_SVC`, key made on the server, network policy = the server's IP) waits for the droplet.
   - **If you rename or reshape `cif_history` / `freight_history` / `calendar_history`, update the views too.**
-- **Keys:** `rfob_` + 256 random bits, header `X-API-Key`.
-  - The server stores only SHA-256 hashes (`/etc/river-fob-api/keys.json`) and re-reads the file on change, so a
-    revoke is instant.
-  - `python -m client_api.manage_keys create|list|revoke`.
-  - Rate limits: 60 calls a minute, 5,000 a day per key.
+- **Keys: the 🔑 API tab** (Kolten 2026-11-05: "a tab on the River Fob admin dashboard where I manage said APIs ... track the
+  pulls, revoke access create others"; pilot client group **Hertshten**). `api_tab.py` is the page, `api_admin.py` the SQL
+  (also a command-line fallback: `python api_admin.py list|create|revoke`).
+  - **Where it shows:** the last tab in the editable layouts (behind EDIT_PASSWORD), never in `?view=1`. Off in the admin
+    portal: its sync replaces `API_ADMIN_TAB = True` with False and excludes api_tab.py / api_admin.py.
+  - **The Snowflake meeting point** (`setup.sql` step 1b, run 11-05): keys and calls live in `RIVER_FOB.API_ADMIN`, so
+    the tab and the API server meet in Snowflake and the server has no admin endpoint on the internet.
+    - `API_KEYS` holds `key_id`, client, the SHA-256 hash, a 9-character hint, note, who / when created, `active`, and
+      revoked at / by. The raw key is shown once in the tab and never stored.
+    - `API_CALLS` holds one row per call.
+    - The server's role reads only the `ACTIVE_KEYS` secure view (id, client, hash of active keys) and may only INSERT
+      calls. RIVER_FOB_ROLE (this app; the portal inherits it) has SELECT/INSERT/UPDATE on keys and SELECT on calls.
+      Nobody has DELETE.
+  - **Revoke timing:** the server re-reads keys at most once a minute, in the background while calls come in. After 5
+    quiet minutes it re-reads before answering. With no successful re-read for 24 h it refuses every key. The query never
+    changes, so Snowflake's result cache serves it without a warehouse until a key changes.
+  - **Call writes:** calls are written in one batch every 5 minutes, and only when there were calls.
+  - **Tab cache:** the tab's queries are cached 60 s, keyed on the time of the user's last create / revoke. A per-session
+    counter could collide with another session's and return its older list; the tests caught that.
+  - **Key format:** `rfob_` + 256 random bits, in the `X-API-Key` header.
+  - **Rate limits:** 60 calls a minute and 5,000 a day per key.
+  - **Address:** the `RIVER_FOB_API_URL` secret gives the tab the API's address and a health check.
+  - Tests: `tests/test_api_tab.py` (the tab headless on SQLite: create, shown once, hide, revoke behind the confirm box,
+    usage). The key SQL was also run on Snowflake TEMPORARY copies of both tables.
 - **Logging and errors:**
   - Every call is logged (key id, client, path, our own parameters, status, rows, ms). A stray parameter's value is
     logged as `***`, so a key put in a URL by mistake is never written.
@@ -180,7 +199,8 @@ it runs on its own droplet (`client_api/DEPLOY.md`) and its guide for the client
 - **Cache:** the data is re-read every 15 minutes in the background. A stale cache answers at once (the cold load
   is ~20 s, and the server warms it at start-up). With Snowflake down it keeps serving and still moves the window at
   midnight.
-- Tests: `python tests/test_client_api.py` (52 checks: data, keys, refusals, rate limit, outage, cache, log).
+- Tests: `python tests/test_client_api.py` (data, keys made in the tab and checked by the server, revoke timing, fail-closed,
+  refusals, rate limit, outage, cache, the call log and the tab's usage queries).
 
 ## 📦 Deliverable Stocks (2026-10-24)
 

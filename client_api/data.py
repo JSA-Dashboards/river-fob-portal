@@ -159,14 +159,19 @@ def _private_key():
                              encryption_algorithm=serialization.NoEncryption())
 
 
-def fetch_rows() -> dict:
-    """{'cif': [...], 'freight': [...], 'calendar': [...]} from the CLIENT_API views. Key-pair auth only (no password
-    fallback): the API's user has no password."""
+def _connect():
+    """The API's own Snowflake login. Key-pair only (its user has no password), and the network policy lets it sign in
+    from the API server's address only."""
     import snowflake.connector as sc
-    conn = sc.connect(account=os.environ["SNOWFLAKE_ACCOUNT"], user=os.environ["SNOWFLAKE_USER"],
+    return sc.connect(account=os.environ["SNOWFLAKE_ACCOUNT"], user=os.environ["SNOWFLAKE_USER"],
                       role=os.environ.get("SNOWFLAKE_ROLE", "RIVER_FOB_API_ROLE"),
                       warehouse=os.environ["SNOWFLAKE_WAREHOUSE"], database="RIVER_FOB", schema="CLIENT_API",
                       private_key=_private_key(), login_timeout=30, network_timeout=60)
+
+
+def fetch_rows() -> dict:
+    """{'cif': [...], 'freight': [...], 'calendar': [...]} from the CLIENT_API views."""
+    conn = _connect()
     try:
         cur = conn.cursor()
         out = {}
@@ -174,6 +179,33 @@ def fetch_rows() -> dict:
             cur.execute(sql)
             out[k] = cur.fetchall()
         return out
+    finally:
+        conn.close()
+
+
+def fetch_keys() -> list[dict]:
+    """The active keys (id, client, hash) from RIVER_FOB.API_ADMIN.ACTIVE_KEYS: the same query every time, so Snowflake's
+    result cache answers it without a warehouse unless a key changed."""
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT key_id, client, key_hash FROM RIVER_FOB.API_ADMIN.ACTIVE_KEYS")
+        return [{"key_id": a, "client": b, "key_hash": c} for a, b, c in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+CALL_FIELDS = ("ts", "key_id", "client", "path", "query", "status", "rows_n", "ms", "ip")
+
+
+def write_calls(rows: list[dict]):
+    """Append call records to RIVER_FOB.API_ADMIN.API_CALLS in one batch (the API's role may only INSERT there)."""
+    conn = _connect()
+    try:
+        conn.cursor().executemany(
+            f"INSERT INTO RIVER_FOB.API_ADMIN.API_CALLS ({', '.join(CALL_FIELDS)}) VALUES ({', '.join(['%s'] * len(CALL_FIELDS))})",
+            [tuple(r.get(f) for f in CALL_FIELDS) for r in rows])
+        conn.commit()
     finally:
         conn.close()
 

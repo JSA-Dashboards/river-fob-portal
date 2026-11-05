@@ -1,36 +1,39 @@
-"""API keys and rate limits for the client API.
+"""API keys, the call log and rate limits for the client API.
 
-Keys:
-  * One key per client group. Format 'rfob_' + 43 random URL-safe characters (secrets.token_urlsafe(32), 256 bits).
-  * The server stores only its SHA-256 hash, in a JSON file OUTSIDE the repo (API_KEYS_FILE, default
-    /etc/river-fob-api/keys.json, mode 600). A stolen file can't be turned back into a key, and a key this long can't be
-    guessed, so a plain hash is enough (no bcrypt needed).
-  * The file is re-read when it changes, so `manage_keys.py revoke` takes effect on the next call, with no restart.
-  * Clients send it in the `X-API-Key` header, never in the URL (URLs end up in logs and browser history).
+Keys (managed in River FOB's 🔑 API tab, api_admin.py; Kolten 2026-11-05):
+  * One key per client group: 'rfob_' + 43 random URL-safe characters (256 bits), sent in the `X-API-Key` header, never
+    in the URL (URLs end up in logs and browser history).
+  * Snowflake holds only SHA-256 hashes. The server reads ACTIVE ones through RIVER_FOB.API_ADMIN.ACTIVE_KEYS (a key this
+    long can't be guessed, so a plain hash is enough; no bcrypt needed).
+  * KeyStore caches that list. Older than REFRESH_S (60 s) while calls come in: re-read in the background, so a revoke in
+    the tab reaches the server within about a minute. Older than BLOCK_S (5 min, e.g. after a quiet night): re-read BEFORE
+    answering, so a key revoked while nobody was calling is refused at once. No successful re-read for MAX_STALE_S (24 h):
+    every key is refused (fail closed).
+  * The re-read is the same plain SELECT each time, so Snowflake's result cache answers it without waking a warehouse
+    unless a key changed.
 
-Rate limits (per key, in memory, one process): LIMIT_PER_MIN calls a minute and LIMIT_PER_DAY a day. The data changes
-once a day, so these are generous for a client and stop a runaway script.
+Call log: every call (refused ones too) goes to the local access log at once, and into a buffer that CallLog writes to
+RIVER_FOB.API_ADMIN.API_CALLS in one INSERT every FLUSH_S (5 min), only when there were calls, so the tab's usage view
+costs a warehouse minute per busy five minutes at most.
+
+Rate limits (per key, in memory, one process): LIMIT_PER_MIN a minute, LIMIT_PER_DAY a day. The data changes once a day.
 """
 from __future__ import annotations
 
 import collections
-import datetime as dt
 import hashlib
 import hmac
-import json
+import logging
 import os
-import secrets
 import threading
 import time
 
 KEY_PREFIX = "rfob_"
-KEYS_FILE = os.environ.get("API_KEYS_FILE", "/etc/river-fob-api/keys.json")
+REFRESH_S, BLOCK_S, MAX_STALE_S = 60, 300, 86400
+FLUSH_S, MAX_BUFFER = 300, 10000
 LIMIT_PER_MIN = int(os.environ.get("API_LIMIT_PER_MIN", "60"))
 LIMIT_PER_DAY = int(os.environ.get("API_LIMIT_PER_DAY", "5000"))
-
-
-def new_key() -> str:
-    return KEY_PREFIX + secrets.token_urlsafe(32)
+log = logging.getLogger("river_fob_api")
 
 
 def key_hash(raw: str) -> str:
@@ -38,79 +41,92 @@ def key_hash(raw: str) -> str:
 
 
 class KeyStore:
-    """{'keys': [{'id', 'client', 'sha256', 'created', 'active', 'note'}]} in a JSON file."""
+    """The active keys, from `fetch()` -> [{'key_id', 'client', 'key_hash'}], cached as described above."""
 
-    def __init__(self, path: str = KEYS_FILE):
-        self.path = path
-        self._keys, self._mtime = [], None
+    def __init__(self, fetch, clock=time.monotonic, refresh=REFRESH_S, block=BLOCK_S, max_stale=MAX_STALE_S):
+        self.fetch, self.clock = fetch, clock
+        self.refresh, self.block, self.max_stale = refresh, block, max_stale
+        self._keys, self._at = None, None
+        self._busy = False
         self._lock = threading.Lock()
 
     def _load(self):
         try:
-            mtime = os.path.getmtime(self.path)
-        except OSError:
-            self._keys, self._mtime = [], None               # no file = no keys = every call refused
+            keys = [dict(k) for k in self.fetch()]
+        except Exception:                                    # noqa: BLE001 — keep the last list; logged for the server's journal
+            log.exception("Couldn't re-read the API keys")
+            with self._lock:
+                self._busy = False
             return
-        if mtime != self._mtime:
-            with open(self.path, encoding="utf-8") as f:
-                self._keys = json.load(f).get("keys", [])
-            self._mtime = mtime
+        with self._lock:
+            self._keys, self._at, self._busy = keys, self.clock(), False
+
+    def _current(self):
+        with self._lock:
+            age = None if self._at is None else self.clock() - self._at
+            if age is not None and age > self.refresh and age <= self.block and not self._busy:
+                self._busy = True
+                threading.Thread(target=self._load, daemon=True, name="river-fob-api-keys").start()
+            stale = age is None or age > self.block
+        if stale:
+            self._load()                                     # first use, or quiet for 5 min: re-read before answering
+        with self._lock:
+            if self._at is None or self.clock() - self._at > self.max_stale:
+                return []                                    # never read, or not re-read for a day: refuse every key
+            return self._keys or []
 
     def verify(self, raw: str | None) -> dict | None:
-        """The active key record `raw` belongs to, else None. Every record is compared (constant-time), so the answer
-        takes the same time whichever key, if any, matches."""
+        """The active key record `raw` belongs to, else None. Every record is compared (constant time)."""
         if not raw or not raw.startswith(KEY_PREFIX) or len(raw) > 200:
             return None
         h = key_hash(raw)
+        found = None
+        for rec in self._current():
+            if hmac.compare_digest(h, str(rec.get("key_hash", ""))):
+                found = {"id": rec.get("key_id"), "client": rec.get("client")}
+        return found
+
+
+class CallLog:
+    """Buffers call records and writes them with `write(rows)` every `every` seconds, from one background thread. A failed
+    write keeps the rows for the next try; past MAX_BUFFER the oldest are dropped (and counted), so a flood of refused calls
+    can't grow memory without bound."""
+
+    def __init__(self, write, every: int = FLUSH_S, max_buffer: int = MAX_BUFFER, start: bool = True):
+        self.write, self.every, self.max_buffer = write, every, max_buffer
+        self._buf, self.dropped = collections.deque(), 0
+        self._lock = threading.Lock()
+        if start:
+            threading.Thread(target=self._loop, daemon=True, name="river-fob-api-calls").start()
+
+    def add(self, rec: dict):
         with self._lock:
-            self._load()
-            found = None
-            for rec in self._keys:
-                if hmac.compare_digest(h, str(rec.get("sha256", ""))) and rec.get("active", True):
-                    found = rec
-            return found
+            if len(self._buf) >= self.max_buffer:
+                self._buf.popleft()
+                self.dropped += 1
+            self._buf.append(rec)
 
-    # ── management (manage_keys.py) ──
-    def _read_all(self) -> dict:
+    def flush(self) -> int:
+        with self._lock:
+            rows = list(self._buf)
+            self._buf.clear()
+        if not rows:
+            return 0
         try:
-            with open(self.path, encoding="utf-8") as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return {"keys": []}
+            self.write(rows)
+            return len(rows)
+        except Exception:                                    # noqa: BLE001 — put them back for the next try
+            log.exception("Couldn't write %d call records; keeping them", len(rows))
+            with self._lock:
+                for r in reversed(rows):
+                    if len(self._buf) < self.max_buffer:
+                        self._buf.appendleft(r)
+            return 0
 
-    def _write_all(self, data: dict):
-        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, self.path)
-
-    def create(self, client: str, note: str = "") -> tuple[str, dict]:
-        """A new key for `client`: returns (the raw key, shown ONCE, never stored; its record)."""
-        data = self._read_all()
-        raw = new_key()
-        rec = {"id": "k_" + secrets.token_hex(4), "client": client, "sha256": key_hash(raw),
-               "created": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "active": True, "note": note}
-        data.setdefault("keys", []).append(rec)
-        self._write_all(data)
-        return raw, rec
-
-    def revoke(self, key_id: str) -> bool:
-        data = self._read_all()
-        hit = False
-        for rec in data.get("keys", []):
-            if rec.get("id") == key_id and rec.get("active", True):
-                rec["active"], rec["revoked"], hit = False, dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), True
-        if hit:
-            self._write_all(data)
-        return hit
-
-    def list(self) -> list[dict]:
-        return [{k: v for k, v in rec.items() if k != "sha256"} for rec in self._read_all().get("keys", [])]
+    def _loop(self):
+        while True:
+            time.sleep(self.every)
+            self.flush()
 
 
 class RateLimiter:

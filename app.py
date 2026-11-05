@@ -4655,6 +4655,22 @@ def render_vessel_lineup_tab():
 
 VESSEL_LINEUP_TAB = "🛳 Vessel Lineup"
 
+# 🔑 API (2026-11-05): the client API's keys and calls (api_tab.py, api_admin.py). Editable layouts only (behind EDIT_PASSWORD),
+# never ?view=1. The admin portal's sync sets the switch below to False, so its copy of this app has no such tab.
+API_ADMIN_TAB = True
+API_TAB = "🔑 API"
+_API_TABS = [API_TAB] if API_ADMIN_TAB else []
+
+
+@_fragment
+def render_api_tab():
+    """🔑 API: make / revoke client API keys, watch their calls. A fragment (its buttons rerun only this tab). Never raises."""
+    try:
+        import api_tab
+        api_tab.render(db._connect)
+    except Exception as e:
+        st.error(f"API tab error: {e}")
+
 
 def _lazy(tab, render, *args, **kwargs):
     """Draw a tab's content only while it is the open one (the tabs are st.tabs(on_change="rerun"))."""
@@ -4686,8 +4702,10 @@ if VIEW_ONLY:
 elif HIST_DATE:
     _names = (["📊 Changes"] + list(M.COMMODITIES)
               + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                 "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "📤 Export", "⚓ Barge Data"])
+                 "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "📤 Export", "⚓ Barge Data"] + _API_TABS)
     T = dict(zip(_names, st.tabs(_names, on_change="rerun")))
+    if API_ADMIN_TAB:
+        _lazy(T[API_TAB], render_api_tab)
     _lazy(T["📊 Changes"], render_changes_tab, view_date, cur=(hist_cif, hist_frt))
     _lazy(T["💵 Net Carry"], render_netcarry_tab)              # 💵 Net Carry sits right after the commodity sheets
     _lazy(T["📈 Seasonal"], render_seasonal_tab)
@@ -4702,8 +4720,10 @@ elif HIST_DATE:
 else:
     _names = (["📊 Changes", "📝 Inputs"] + list(M.COMMODITIES)
               + ["💵 Net Carry", "📈 Seasonal", "💵 Cash vs Del", "🛥 River Bids",
-                 "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "📤 Export", "⚓ Barge Data"])
+                 "🚢 FOB Vessel", VESSEL_LINEUP_TAB, "📤 Export", "⚓ Barge Data"] + _API_TABS)
     T = dict(zip(_names, st.tabs(_names, on_change="rerun")))
+    if API_ADMIN_TAB:
+        _lazy(T[API_TAB], render_api_tab)
     _lazy(T["📊 Changes"], render_changes_tab, as_of)
     _lazy(T["📝 Inputs"], render_inputs_tab, as_of)
     _lazy(T["💵 Net Carry"], render_netcarry_tab)              # 💵 Net Carry sits right after the commodity sheets

@@ -40,6 +40,51 @@ GRANT SELECT ON VIEW RIVER_FOB.CLIENT_API.CIF_12M TO ROLE RIVER_FOB_API_ROLE;
 GRANT SELECT ON VIEW RIVER_FOB.CLIENT_API.FREIGHT_12M TO ROLE RIVER_FOB_API_ROLE;
 GRANT SELECT ON VIEW RIVER_FOB.CLIENT_API.CALENDAR_12M TO ROLE RIVER_FOB_API_ROLE;
 
+-- ── Step 1b: keys and the call log (2026-11-05: managed from River FOB's 🔑 API tab) ─────────────────────────────────
+-- The tab (River FOB's Cloud app, RIVER_FOB_ROLE; the admin portal inherits that role but doesn't show the tab) creates and
+-- revokes keys and reads the calls. The API server (RIVER_FOB_API_ROLE) sees only ACTIVE key hashes, through a secure
+-- view, and can only ADD call rows: it can't read the log, change a key or see a revoked one. Nobody stores a raw key.
+
+CREATE SCHEMA IF NOT EXISTS RIVER_FOB.API_ADMIN
+  COMMENT = 'Client API keys (hashes only) and the call log, managed from the River FOB app''s API tab';
+
+CREATE TABLE IF NOT EXISTS RIVER_FOB.API_ADMIN.API_KEYS (
+  key_id      STRING NOT NULL PRIMARY KEY,     -- k_ + 8 hex, shown in the tab and the log
+  client      STRING NOT NULL,                 -- the client group, e.g. Hertshten
+  key_hash    STRING NOT NULL,                 -- SHA-256 hex of the key (the key itself is shown once, never stored)
+  key_hint    STRING,                          -- its first 9 characters ('rfob_Ab12'), to tell keys apart
+  note        STRING,
+  created_at  TIMESTAMP_NTZ NOT NULL,          -- UTC
+  created_by  STRING,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  revoked_at  TIMESTAMP_NTZ,
+  revoked_by  STRING
+);
+
+CREATE TABLE IF NOT EXISTS RIVER_FOB.API_ADMIN.API_CALLS (
+  ts      TIMESTAMP_NTZ NOT NULL,              -- UTC
+  key_id  STRING,                              -- NULL for a call with no / a wrong key
+  client  STRING,
+  path    STRING,
+  query   STRING,                              -- our own parameters as sent, any other value as '***'
+  status  NUMBER,
+  rows_n  NUMBER,
+  ms      NUMBER,
+  ip      STRING
+);
+
+CREATE OR REPLACE SECURE VIEW RIVER_FOB.API_ADMIN.ACTIVE_KEYS
+  COMMENT = 'What the API server may read: active keys, hash and client only'
+AS SELECT key_id, client, key_hash FROM RIVER_FOB.API_ADMIN.API_KEYS WHERE active;
+
+GRANT USAGE ON SCHEMA RIVER_FOB.API_ADMIN TO ROLE RIVER_FOB_API_ROLE;
+GRANT SELECT ON VIEW RIVER_FOB.API_ADMIN.ACTIVE_KEYS TO ROLE RIVER_FOB_API_ROLE;
+GRANT INSERT ON TABLE RIVER_FOB.API_ADMIN.API_CALLS TO ROLE RIVER_FOB_API_ROLE;
+
+GRANT USAGE ON SCHEMA RIVER_FOB.API_ADMIN TO ROLE RIVER_FOB_ROLE;
+GRANT SELECT, INSERT, UPDATE ON TABLE RIVER_FOB.API_ADMIN.API_KEYS TO ROLE RIVER_FOB_ROLE;
+GRANT SELECT ON TABLE RIVER_FOB.API_ADMIN.API_CALLS TO ROLE RIVER_FOB_ROLE;
+
 -- ── Step 2, once the API server exists ───────────────────────────────────────────────────────────────────────────────
 -- The key pair is made ON the server (client_api/DEPLOY.md); only its PUBLIC key comes here. The network policy lets
 -- this user sign in from the server's address only, so a copied key is useless anywhere else.

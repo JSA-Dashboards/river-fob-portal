@@ -18,6 +18,7 @@ internals in an error, every call logged (who, what, how many rows), a rate limi
 """
 from __future__ import annotations
 
+import atexit
 import csv
 import io
 import json
@@ -81,15 +82,18 @@ def _day(raw: str | None, what: str):
 
 def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = None,
                limiter: auth.RateLimiter | None = None, access_log: str | None = os.environ.get("API_ACCESS_LOG"),
-               today=None, warm: bool = False) -> FastAPI:
+               today=None, warm: bool = False, calls: auth.CallLog | None = None) -> FastAPI:
     """`today` () -> date: the day the 12-month window ends (Central time by default; the tests pin it).
-    `warm`: start loading the data now, in the background (the server does; the tests don't)."""
+    `warm`: start loading the data now, in the background (the server does; the tests don't).
+    `calls`: where every call is recorded for the 🔑 API tab (Snowflake by default; None in tests = not recorded)."""
     today = today or data.today_central
-    store = store or auth.KeyStore()
+    store = store or auth.KeyStore(fetch=data.fetch_keys)
     loader = loader or data.Loader(today=today)
     limiter = limiter or auth.RateLimiter()
     if warm:
         loader.warm()
+    if calls is not None:
+        atexit.register(calls.flush)                              # a restart writes what's buffered, not loses it
     app = FastAPI(title="River FOB API", docs_url=None, redoc_url=None, openapi_url=None)
     alog = None
     if access_log:
@@ -110,15 +114,19 @@ def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
+        rec = getattr(request.state, "client", None) or {}
+        fwd = request.headers.get("x-forwarded-for", "")
+        now = dt.datetime.now(dt.timezone.utc)
+        entry = {"ip": fwd.split(",")[0].strip() or (request.client.host if request.client else ""),
+                 "key": rec.get("id"), "client": rec.get("client"), "path": request.url.path,
+                 "query": _log_query(request.query_params), "status": response.status_code,
+                 "rows": getattr(request.state, "rows", None), "ms": round((time.monotonic() - t0) * 1000)}
         if alog is not None:
-            rec = getattr(request.state, "client", None) or {}
-            fwd = request.headers.get("x-forwarded-for", "")
-            alog.write(json.dumps({
-                "ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-                "ip": fwd.split(",")[0].strip() or (request.client.host if request.client else ""),
-                "key": rec.get("id"), "client": rec.get("client"), "path": request.url.path,
-                "query": _log_query(request.query_params), "status": response.status_code,
-                "rows": getattr(request.state, "rows", None), "ms": round((time.monotonic() - t0) * 1000)}) + "\n")
+            alog.write(json.dumps({"ts": now.isoformat(timespec="seconds"), **entry}) + "\n")
+        if calls is not None and request.url.path != "/v1/health":        # the tab tracks clients' calls, not health probes
+            calls.add({"ts": now.replace(tzinfo=None).isoformat(sep=" ", timespec="seconds"), "key_id": entry["key"],
+                       "client": entry["client"], "path": entry["path"], "query": entry["query"], "status": entry["status"],
+                       "rows_n": entry["rows"], "ms": entry["ms"], "ip": entry["ip"]})
         return response
 
     def guard(request: Request, name: str) -> dict:
@@ -217,4 +225,7 @@ def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = 
     return app
 
 
-app = create_app(warm=os.environ.get("API_WARM", "1") == "1")      # what uvicorn serves; loads the data at start-up
+if os.environ.get("API_WARM", "1") == "1":                        # the server: load at start-up, record calls in Snowflake
+    app = create_app(warm=True, calls=auth.CallLog(write=data.write_calls))
+else:                                                             # tests / tooling: nothing starts on import
+    app = None
