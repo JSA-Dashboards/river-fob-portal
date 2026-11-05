@@ -20,7 +20,7 @@ soybeans and wheat, over the **last 12 months** of published sheets.
 | `/v1/cif` | `commodity`, `start`, `end`, `format` | CIF NOLA basis by delivery month |
 | `/v1/freight` | `region`, `start`, `end`, `format` | barge freight by river region and delivery month |
 | `/v1/fob` | `commodity`, `location`, `start`, `end`, `format` | FOB barge basis by location and delivery month |
-| `/v1/health` | — (no key needed) | `{"status": "ok"}` |
+| `/v1/health` | — (no key needed) | `{"status": "ok", "data": "ok"}` |
 
 - `commodity`, `location`, `region`: one name or a comma-separated list, any case (`corn,soybeans`; `Hennepin,STL`).
   Omit to get all.

@@ -3,7 +3,7 @@
     uvicorn client_api.app:app --host 127.0.0.1 --port 8000        # behind Caddy (HTTPS), see client_api/DEPLOY.md
 
 Endpoints (all GET; every one but /v1/health needs the `X-API-Key` header):
-    /v1/health                     {"status": "ok"}
+    /v1/health                     {"status": "ok", "data": "ok"}  ("loading" for a few seconds after a restart)
     /v1/dates                      the saved sheet dates the key can see, newest first
     /v1/locations                  the 18 FOB locations (river, freight region) and the 7 freight regions
     /v1/cif      ?commodity=&start=&end=&format=
@@ -200,7 +200,9 @@ def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = 
 
     @app.get("/v1/health")
     def health():
-        return {"status": "ok"}
+        """No key, nothing read: is the process up, and does it hold the data? `data` is "loading" until the first load
+        lands (a few seconds after a restart). The uptime check (client_api/monitor/uptime.sh) needs "ok"."""
+        return {"status": "ok", "data": "ok" if loader.loaded else "loading"}
 
     @app.get("/v1/dates")
     def dates(request: Request):

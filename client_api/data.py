@@ -264,6 +264,11 @@ class Loader:
                 threading.Thread(target=self._refresh, daemon=True, name="river-fob-api-refresh").start()
             return self._data
 
+    @property
+    def loaded(self) -> bool:
+        """True once a dataset is in hand (what /v1/health reports; it never triggers a load)."""
+        return self._data is not None
+
     def warm(self):
         """Load in the background now (server start-up), so the first client call doesn't wait."""
         threading.Thread(target=lambda: self._safe_get(), daemon=True, name="river-fob-api-warm").start()

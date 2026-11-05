@@ -132,7 +132,8 @@ CALLS = auth.CallLog(write=lambda rows: None, start=False)
 api = TestClient(A.create_app(store=store, loader=data.Loader(fetch=fetch, today=lambda: TODAY), limiter=lim,
                               access_log=LOG, today=lambda: TODAY, calls=CALLS))
 H = {"X-API-Key": KEY}
-check("health needs no key", api.get("/v1/health").json() == {"status": "ok"})
+check("health needs no key, and says 'loading' before the first data load (it never triggers one)",
+      api.get("/v1/health").json() == {"status": "ok", "data": "loading"} and not fetches)
 check("no key -> 401", api.get("/v1/cif").status_code == 401)
 check("a wrong key -> 401", api.get("/v1/cif", headers={"X-API-Key": "rfob_" + "x" * 43}).status_code == 401)
 check("a key in the URL is not accepted (401)", api.get(f"/v1/cif?key={KEY}").status_code == 401)
@@ -177,6 +178,8 @@ print("\napi: data")
 j = api.get("/v1/cif", headers=H).json()
 check("no dates given -> the newest sheet only", j["start"] == j["end"] == NEW and {x["date"] for x in j["rows"]} == {NEW}, j["start"])
 check("units are stated", "$/bu" in j["units"] and j["window"] == {"first": "2025-11-05", "last": "2026-11-05"}, j["window"])
+check("once the data is in, health says data ok (what the uptime check needs)",
+      api.get("/v1/health").json() == {"status": "ok", "data": "ok"})
 j = api.get("/v1/fob?commodity=corn&location=hennepin,STL&start=2020-01-01", headers=H).json()
 check("start before the window is clipped to it; filters any case; a list of locations (STL has no freight here)",
       j["start"] == "2025-11-05" and {x["location"] for x in j["rows"]} == {"Hennepin"}
