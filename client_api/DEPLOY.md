@@ -5,6 +5,30 @@ nothing else: no repo credentials, no other app's secrets, and no client keys (t
 managed in River FOB's 🔑 API tab). Kolten chose this, "the server's own address for now" and a rolling 12 months on
 2026-11-05. The pilot client group is **Hertshten**.
 
+## LIVE since 2026-11-05: https://162.243.174.38
+
+- **Droplet:** `river-fob-api`, NYC1, Ubuntu 24.04.5, 1 GB. Only Kolten's `basis-tracker-droplet` SSH key is on it.
+  `ssh root@162.243.174.38`; batch the work into one session, because ufw rate-limits quick reconnects.
+- **Packages:** FastAPI 0.162, Starlette 1.10, uvicorn 0.54, snowflake-connector 5.2.0 (`client_api/requirements.lock` on
+  the box).
+- **Caddy 2.11.9:** Let's Encrypt IP certificate (issuer YE2, 6-day, `shortlived` profile; the first one came at once).
+  No contact email: one was set by mistake for the first certificate and then removed.
+- **Snowflake:** account `JSA-ANALYTICS`, user `RIVER_FOB_API_SVC` (TYPE=SERVICE, key fingerprint
+  `SHA256:YR/6EMroZngklPXDr3iaFVikNmkm80XboKJyziYE1iA=`). User-level network policy `RIVER_FOB_API_ONLY` = this IP.
+- **Proved from the box as that user:** the 3 views and ACTIVE_KEYS read. Refused: PUBLIC.CIF_HISTORY, FUTURES_HISTORY,
+  API_KEYS, API_CALLS, JSA.*, UPDATE / DELETE / CREATE.
+- **End to end over HTTPS with a temporary key** ("JSA deploy check", revoked; it stays in the tab as revoked):
+  - 140 sheets, and corn FOB on 11-04 equal to the portal's grid.
+  - CSV works; 400 / 401 / 404 as designed.
+  - The revoke was refused within about a minute.
+  - Calls reached API_CALLS.
+- **Two go-live fixes:**
+  - The buffered calls are now written in the app's shutdown, because atexit ran too late and a restart lost a batch.
+  - Only `/v1/` calls go to the tab's log, because scanners hit `/` and `/favicon.ico` within the first hour.
+- **Deploying a change:** from the PC, in this repo, run
+  `tar --exclude=__pycache__ -cf - client_api fob_model.py net_carry_data.py | ssh root@162.243.174.38 'tar -xf - -C /opt/river-fob-api && chown -R root:root /opt/river-fob-api && systemctl restart river-fob-api'`.
+  The journal should then show `Shutdown: wrote N buffered call record(s)` and `Data loaded: ...`.
+
 ## 0. Kolten: create the droplet
 
 DigitalOcean → Create → Droplets:

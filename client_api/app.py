@@ -132,7 +132,10 @@ def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = 
                  "rows": getattr(request.state, "rows", None), "ms": round((time.monotonic() - t0) * 1000)}
         if alog is not None:
             alog.write(json.dumps({"ts": now.isoformat(timespec="seconds"), **entry}) + "\n")
-        if calls is not None and request.url.path != "/v1/health":        # the tab tracks clients' calls, not health probes
+        # The 🔑 API tab tracks calls to the API's own paths only: not health probes, and not the internet's scanners
+        # ('/', '/favicon.ico', '/.env' ... from the first hour live), which would clutter it and wake the warehouse every
+        # 5 minutes all day. The local access log above still keeps everything.
+        if calls is not None and request.url.path.startswith("/v1/") and request.url.path != "/v1/health":
             calls.add({"ts": now.replace(tzinfo=None).isoformat(sep=" ", timespec="seconds"), "key_id": entry["key"],
                        "client": entry["client"], "path": entry["path"], "query": entry["query"], "status": entry["status"],
                        "rows_n": entry["rows"], "ms": entry["ms"], "ip": entry["ip"]})

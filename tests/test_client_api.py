@@ -286,8 +286,10 @@ check("refused calls are logged too (401 with no key id)", any(x["status"] == 40
 
 print("\ncalls: recorded for the 🔑 API tab")
 buffered = list(CALLS._buf)
-check("every call but /v1/health is buffered for Snowflake", buffered and not any(c["path"] == "/v1/health" for c in buffered)
-      and len(buffered) == sum(1 for x in recs if x["path"] != "/v1/health"), (len(buffered), len(recs)))
+check("every /v1/ call but health is buffered for Snowflake; scanner paths (/docs, /favicon.ico ...) are not",
+      buffered and not any(c["path"] == "/v1/health" or not c["path"].startswith("/v1/") for c in buffered)
+      and len(buffered) == sum(1 for x in recs if x["path"].startswith("/v1/") and x["path"] != "/v1/health")
+      and any(not x["path"].startswith("/v1/") for x in recs), (len(buffered), len(recs)))
 check("with the API_CALLS columns, a UTC timestamp, and never the key", set(buffered[0]) == set(data.CALL_FIELDS)
       and len(buffered[0]["ts"]) == 19 and KEY not in json.dumps(buffered), buffered[0])
 
