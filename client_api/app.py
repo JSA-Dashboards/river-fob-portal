@@ -147,7 +147,12 @@ def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = 
         if rec is None:
             raise HTTPException(401, "Missing or invalid API key (send it in the X-API-Key header).",
                                 headers={"WWW-Authenticate": "ApiKey"})
-        request.state.client = rec
+        request.state.client = rec                                # logged with its key id, expired or not (the tab shows it)
+        if rec.get("expired"):
+            until = rec.get("expires_at")
+            raise HTTPException(401, f"This API key expired{f' on {until:%Y-%m-%d}' if until else ''}. "
+                                     "Please ask John Stewart & Associates for a renewal.",
+                                headers={"WWW-Authenticate": "ApiKey"})
         ok, wait = limiter.allow(rec["id"])
         if not ok:
             raise HTTPException(429, f"Rate limit reached; try again in {wait} seconds.", headers={"Retry-After": str(wait)})

@@ -21,6 +21,7 @@ Rate limits (per key, in memory, one process): LIMIT_PER_MIN a minute, LIMIT_PER
 from __future__ import annotations
 
 import collections
+import datetime as dt
 import hashlib
 import hmac
 import logging
@@ -40,11 +41,28 @@ def key_hash(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-class KeyStore:
-    """The active keys, from `fetch()` -> [{'key_id', 'client', 'key_hash'}], cached as described above."""
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
-    def __init__(self, fetch, clock=time.monotonic, refresh=REFRESH_S, block=BLOCK_S, max_stale=MAX_STALE_S):
-        self.fetch, self.clock = fetch, clock
+
+def _when(v):
+    """An expiry as the view hands it (a naive UTC datetime from Snowflake, text from SQLite) -> datetime, or None."""
+    if v is None or isinstance(v, dt.datetime):
+        return v
+    try:
+        return dt.datetime.fromisoformat(str(v))
+    except ValueError:
+        return None
+
+
+class KeyStore:
+    """The active keys, from `fetch()` -> [{'key_id', 'client', 'key_hash', 'expires_at'}], cached as described above.
+    A key is good until its `expires_at` (UTC; 6 months from when it was made, api_admin.KEY_MONTHS): after that verify()
+    hands back the record marked expired, so the caller can say so, and the key opens nothing. A key with no expiry (none
+    should exist: the table was back-filled when expiry came in) is treated as expired, failing closed."""
+
+    def __init__(self, fetch, clock=time.monotonic, refresh=REFRESH_S, block=BLOCK_S, max_stale=MAX_STALE_S, now=_utcnow):
+        self.fetch, self.clock, self.now = fetch, clock, now
         self.refresh, self.block, self.max_stale = refresh, block, max_stale
         self._keys, self._at = None, None
         self._busy = False
@@ -76,14 +94,17 @@ class KeyStore:
             return self._keys or []
 
     def verify(self, raw: str | None) -> dict | None:
-        """The active key record `raw` belongs to, else None. Every record is compared (constant time)."""
+        """The active key record `raw` belongs to — {'id', 'client', 'expires_at', 'expired'} — else None. Every record is
+        compared (constant time). The caller must refuse a record with expired=True."""
         if not raw or not raw.startswith(KEY_PREFIX) or len(raw) > 200:
             return None
         h = key_hash(raw)
         found = None
         for rec in self._current():
             if hmac.compare_digest(h, str(rec.get("key_hash", ""))):
-                found = {"id": rec.get("key_id"), "client": rec.get("client")}
+                until = _when(rec.get("expires_at"))
+                found = {"id": rec.get("key_id"), "client": rec.get("client"), "expires_at": until,
+                         "expired": until is None or until <= self.now()}
         return found
 
 

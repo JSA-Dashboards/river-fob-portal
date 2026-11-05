@@ -58,8 +58,15 @@ CREATE TABLE IF NOT EXISTS RIVER_FOB.API_ADMIN.API_KEYS (
   created_by  STRING,
   active      BOOLEAN NOT NULL DEFAULT TRUE,
   revoked_at  TIMESTAMP_NTZ,
-  revoked_by  STRING
+  revoked_by  STRING,
+  expires_at  TIMESTAMP_NTZ                    -- UTC, 6 months after it was made (or extended)
 );
+
+-- Keys expire after 6 months (Kolten 2026-11-05: "make the apis good for 6 months"). For a table made before then: add the
+-- column and give every key without one an expiry 6 months after it was made. The SERVER enforces the expiry: the view
+-- below only hands it over, because a view that compared with the current time couldn't use Snowflake's result cache.
+ALTER TABLE RIVER_FOB.API_ADMIN.API_KEYS ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP_NTZ;
+UPDATE RIVER_FOB.API_ADMIN.API_KEYS SET expires_at = DATEADD(month, 6, created_at) WHERE expires_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS RIVER_FOB.API_ADMIN.API_CALLS (
   ts      TIMESTAMP_NTZ NOT NULL,              -- UTC
@@ -73,9 +80,9 @@ CREATE TABLE IF NOT EXISTS RIVER_FOB.API_ADMIN.API_CALLS (
   ip      STRING
 );
 
-CREATE OR REPLACE SECURE VIEW RIVER_FOB.API_ADMIN.ACTIVE_KEYS
-  COMMENT = 'What the API server may read: active keys, hash and client only'
-AS SELECT key_id, client, key_hash FROM RIVER_FOB.API_ADMIN.API_KEYS WHERE active;
+CREATE OR REPLACE SECURE VIEW RIVER_FOB.API_ADMIN.ACTIVE_KEYS COPY GRANTS
+  COMMENT = 'What the API server may read: active keys, hash, client and expiry only'
+AS SELECT key_id, client, key_hash, expires_at FROM RIVER_FOB.API_ADMIN.API_KEYS WHERE active;
 
 GRANT USAGE ON SCHEMA RIVER_FOB.API_ADMIN TO ROLE RIVER_FOB_API_ROLE;
 GRANT SELECT ON VIEW RIVER_FOB.API_ADMIN.ACTIVE_KEYS TO ROLE RIVER_FOB_API_ROLE;

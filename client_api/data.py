@@ -184,13 +184,14 @@ def fetch_rows() -> dict:
 
 
 def fetch_keys() -> list[dict]:
-    """The active keys (id, client, hash) from RIVER_FOB.API_ADMIN.ACTIVE_KEYS: the same query every time, so Snowflake's
-    result cache answers it without a warehouse unless a key changed."""
+    """The active keys (id, client, hash, expiry) from RIVER_FOB.API_ADMIN.ACTIVE_KEYS: the same query every time, so
+    Snowflake's result cache answers it without a warehouse unless a key changed. The expiry is checked by the server
+    (auth.KeyStore), not in the view, so the query stays cacheable."""
     conn = _connect()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT key_id, client, key_hash FROM RIVER_FOB.API_ADMIN.ACTIVE_KEYS")
-        return [{"key_id": a, "client": b, "key_hash": c} for a, b, c in cur.fetchall()]
+        cur.execute("SELECT key_id, client, key_hash, expires_at FROM RIVER_FOB.API_ADMIN.ACTIVE_KEYS")
+        return [{"key_id": a, "client": b, "key_hash": c, "expires_at": d} for a, b, c, d in cur.fetchall()]
     finally:
         conn.close()
 

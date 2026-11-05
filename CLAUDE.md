@@ -187,6 +187,14 @@ it runs on its own droplet (`client_api/DEPLOY.md`) and its guide for the client
   - **Call writes:** calls are written in one batch every 5 minutes, and only when there were calls.
   - **Tab cache:** the tab's queries are cached 60 s, keyed on the time of the user's last create / revoke. A per-session
     counter could collide with another session's and return its older list; the tests caught that.
+  - **Keys are good for 6 months** (Kolten 2026-11-05: "make the apis good for 6 months"; `api_admin.KEY_MONTHS`).
+    - `API_KEYS.expires_at` is UTC; keys made before it were back-filled to created + 6 months. **Extend** in the tab (or
+      `python api_admin.py extend <id>`) sets now + 6 months, so the client keeps the same key.
+    - The tab shows an Expires column and warns 30 days ahead.
+    - The SERVER enforces the expiry (`auth.KeyStore.verify` marks the record expired; the guard answers 401 "This API key
+      expired on <date>" and still logs the key id). `ACTIVE_KEYS` only carries `expires_at`: a view comparing with the
+      current time couldn't use Snowflake's result cache, and the once-a-minute key read would wake the warehouse.
+    - A key with no expiry is treated as expired (fail closed).
   - **Key format:** `rfob_` + 256 random bits, in the `X-API-Key` header.
   - **Rate limits:** 60 calls a minute and 5,000 a day per key.
   - **Address:** the `RIVER_FOB_API_URL` secret gives the tab the API's address and a health check.

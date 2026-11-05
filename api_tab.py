@@ -54,6 +54,30 @@ def _central(series) -> pd.Series:
     return s.dt.tz_convert(CENTRAL).dt.strftime("%b %d, %Y %I:%M %p")
 
 
+def _when(v):
+    """An expiry / time from the table (datetime from Snowflake, text from SQLite) -> naive UTC datetime, or None."""
+    if v is None or (isinstance(v, float) and v != v):
+        return None
+    t = pd.to_datetime(v, errors="coerce")
+    return None if pd.isna(t) else t.to_pydatetime().replace(tzinfo=None)
+
+
+def _days_left(v):
+    """Whole days until an expiry (negative once past); None when there is none (treated as expired, like the server)."""
+    t = _when(v)
+    if t is None:
+        return None
+    return int((t - api_admin._utcnow()).total_seconds() // 86400)
+
+
+def _day(v) -> str:
+    """A UTC time as its Central calendar date, 'May 05, 2027'."""
+    t = _when(v)
+    if t is None:
+        return "—"
+    return pd.Timestamp(t).tz_localize("UTC").tz_convert(CENTRAL).strftime("%b %d, %Y")
+
+
 def _rerun():
     try:
         st.rerun(scope="fragment")
@@ -75,15 +99,18 @@ def render(connect, tables: dict | None = None):
     st.markdown("### 🔑 Client API")
     url = _api_url()
     st.caption("Keys for the River FOB client API: CIF NOLA, barge freight and FOB values, the last 12 months of saved sheets. "
-               "A key is shown once when it's made; only its fingerprint is stored. A revoke reaches the API within about a "
-               "minute." + (f" API address: `{url}`" if url else " (API address not set yet: the RIVER_FOB_API_URL secret.)"))
+               f"A key is good for {api_admin.KEY_MONTHS} months, and **Extend** gives it {api_admin.KEY_MONTHS} more from today "
+               "(the client keeps the same key). It's shown once when it's made; only its fingerprint is stored. A revoke "
+               "reaches the API within about a minute."
+               + (f" API address: `{url}`" if url else " (API address not set yet: the RIVER_FOB_API_URL secret.)"))
     st.session_state.setdefault("api_v", 0)
 
     # ── a key just made: shown once ───────────────────────────────────────────────────────────────────────────────────
     new = st.session_state.get("api_new_key")
     if new:
         with st.container(border=True):
-            st.success(f"New key for **{new['client']}** ({new['key_id']}). Copy it now: it won't be shown again.")
+            st.success(f"New key for **{new['client']}** ({new['key_id']}), good until {new.get('until', '?')}. "
+                       "Copy it now: it won't be shown again.")
             st.code(new["raw"], language=None)
             st.caption("Send it through a password-manager share or a one-time secret link, never plain email or chat. "
                        "Give the client client_api/README.md with it.")
@@ -115,19 +142,30 @@ def render(connect, tables: dict | None = None):
 
     # ── keys ───────────────────────────────────────────────────────────────────────────────────────────────────────────
     st.markdown("#### Keys")
+    for k in keys:
+        k["days_left"] = _days_left(k.get("expires_at"))
+    soon = [k for k in keys if k["active"] and (k["days_left"] is None or k["days_left"] <= 30)]
+    if soon:
+        st.warning("**Expiring:** " + "; ".join(
+            f"{k['client']} {k['key_id']} " + ("has EXPIRED (the API refuses it)" if k["days_left"] is None or k["days_left"] < 0
+                                                else f"expires in {k['days_left']} day{'s' if k['days_left'] != 1 else ''}")
+            for k in soon) + ". **Extend** keeps the client's key working; or make a new one and revoke the old.")
     if not keys_shown:
         st.info("No keys yet. Make one below.")
     else:
         df = pd.DataFrame(keys_shown)
         show = pd.DataFrame({
             "Client": df["client"], "Key ID": df["key_id"], "Key starts": df["key_hint"].fillna("") + "…",
-            "Status": ["Active" if a else "Revoked" for a in df["active"]],
+            "Status": [("Revoked" if not a else "Expired" if (n is None or n < 0) else "Active")
+                       for a, n in zip(df["active"], df["days_left"])],
+            "Expires": [f"{_day(e)} ({'expired' if n is None or n < 0 else f'{n} d'})" if e is not None and str(e) != "NaT" else "—"
+                        for e, n in zip(df["expires_at"], df["days_left"])],
             "Created": _central(df["created_at"]), "Last call": _central(df["last_call"]).fillna("never"),
             f"Calls ({days} d)": df["calls_n"], f"Rows served ({days} d)": df["rows_total"],
             "Revoked": _central(df["revoked_at"]).fillna(""), "Note": df["note"].fillna("")})
         st.dataframe(show, hide_index=True, width="stretch")
 
-    k1, k2 = st.columns(2)
+    k1, k3, k2 = st.columns(3)
     with k1:
         with st.form("api_create", clear_on_submit=True, border=True):
             st.markdown("**Create a key**")
@@ -138,8 +176,24 @@ def render(connect, tables: dict | None = None):
                     st.error("Enter the client group's name.")
                 else:
                     raw, rec = _act(api_admin.create_key, name, note, by="river-fob app")
-                    st.session_state["api_new_key"] = {"raw": raw, "client": rec["client"], "key_id": rec["key_id"]}
+                    st.session_state["api_new_key"] = {"raw": raw, "client": rec["client"], "key_id": rec["key_id"],
+                                                       "until": _day(rec["expires_at"])}
                     st.session_state["api_v"] = time.time_ns()
+                    _rerun()
+    with k3:
+        with st.container(border=True):
+            st.markdown(f"**Extend a key {api_admin.KEY_MONTHS} months**")
+            live = [k for k in keys if k["active"]]
+            if not live:
+                st.caption("No active keys.")
+            else:
+                ext = st.selectbox("Key", live, key="api_extend_pick",
+                                   format_func=lambda k: f"{k['client']} — {k['key_id']} (until {_day(k.get('expires_at'))})")
+                to = _day(api_admin.add_months(api_admin._utcnow(), api_admin.KEY_MONTHS))
+                if st.button(f"Extend to {to}", key="api_extend"):
+                    _act(api_admin.extend_key, ext["key_id"])
+                    st.session_state["api_v"] = time.time_ns()
+                    st.toast(f"{ext['client']} {ext['key_id']} is good until {to}.")
                     _rerun()
     with k2:
         with st.container(border=True):

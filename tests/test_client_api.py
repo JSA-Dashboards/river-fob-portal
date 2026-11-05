@@ -89,7 +89,8 @@ print("\nkeys: made in the 🔑 API tab (api_admin), checked by the server (auth
 DB = sqlite3.connect(os.path.join(TMP, "api_admin.db"), check_same_thread=False)
 DB.executescript("""
 CREATE TABLE api_keys (key_id TEXT PRIMARY KEY, client TEXT NOT NULL, key_hash TEXT NOT NULL, key_hint TEXT, note TEXT,
-                       created_at TEXT NOT NULL, created_by TEXT, active BOOLEAN NOT NULL DEFAULT 1, revoked_at TEXT, revoked_by TEXT);
+                       created_at TEXT NOT NULL, created_by TEXT, active BOOLEAN NOT NULL DEFAULT 1, revoked_at TEXT, revoked_by TEXT,
+                       expires_at TEXT);
 CREATE TABLE api_calls (ts TEXT, key_id TEXT, client TEXT, path TEXT, query TEXT, status INTEGER, rows_n INTEGER, ms INTEGER, ip TEXT);
 """)
 T = {"keys_table": "api_keys"}
@@ -113,8 +114,18 @@ key_reads = []
 
 def active_keys():                                                    # what RIVER_FOB.API_ADMIN.ACTIVE_KEYS returns
     key_reads.append(1)
-    return [{"key_id": a, "client": b, "key_hash": c}
-            for a, b, c in DB.execute("SELECT key_id, client, key_hash FROM api_keys WHERE active").fetchall()]
+    return [{"key_id": a, "client": b, "key_hash": c, "expires_at": d}
+            for a, b, c, d in DB.execute("SELECT key_id, client, key_hash, expires_at FROM api_keys WHERE active").fetchall()]
+
+
+print("\nkeys: good for 6 months")
+D6 = api_admin.add_months
+check("6 months on: May 5 -> Nov 5, Aug 31 -> Feb 28 (or 29), Dec 15 -> Jun 15",
+      D6(dt.datetime(2026, 5, 5, 9), 6) == dt.datetime(2026, 11, 5, 9) and D6(dt.datetime(2026, 8, 31), 6) == dt.datetime(2027, 2, 28)
+      and D6(dt.datetime(2027, 8, 31), 6) == dt.datetime(2028, 2, 29) and D6(dt.datetime(2026, 12, 15), 6) == dt.datetime(2027, 6, 15))
+exp = dt.datetime.fromisoformat(rec["expires_at"])
+check("a new key expires 6 months after it's made", exp == D6(dt.datetime.fromisoformat(rec["created_at"]), 6) and exp.year == 2027
+      or exp > dt.datetime.now() + dt.timedelta(days=180), rec["expires_at"])
 
 
 store = auth.KeyStore(fetch=active_keys, clock=lambda: kclock["now"])
@@ -166,6 +177,22 @@ api_admin.revoke_key(DB, "?", rec3["key_id"], **T)
 kclock["now"] += 301
 check("... and a key revoked during a quiet spell is refused on its first call", api.get(
     "/v1/dates", headers={"X-API-Key": OTHER2}).status_code == 401)
+past = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - dt.timedelta(days=1)).isoformat(sep=" ", timespec="seconds")
+DB.execute("UPDATE api_keys SET expires_at = ? WHERE key_id = ?", (past, rec["key_id"]))
+DB.commit()
+kclock["now"] += 301                                                  # a fresh read of the keys
+r = api.get("/v1/dates", headers=H)
+check("an expired key -> 401 that says it expired and when (a client can tell why)", r.status_code == 401
+      and "expired on" in r.json()["detail"] and past[:10] in r.json()["detail"], r.text)
+check("the expired call is still logged under its key id (the tab shows who's knocking)",
+      CALLS._buf[-1]["key_id"] == rec["key_id"] and CALLS._buf[-1]["status"] == 401)
+until = api_admin.extend_key(DB, "?", rec["key_id"], **T)
+kclock["now"] += 301
+check("extend gives it 6 months from today, and the same key works again", until and dt.datetime.fromisoformat(until)
+      > dt.datetime.now() + dt.timedelta(days=180) and api.get("/v1/dates", headers=H).status_code == 200, until)
+check("extend refuses a revoked key", api_admin.extend_key(DB, "?", rec2["key_id"], **T) is None)
+noexp = auth.KeyStore(fetch=lambda: [{"key_id": "k_x", "client": "X", "key_hash": auth.key_hash(KEY), "expires_at": None}])
+check("a key with no expiry counts as expired (fail closed)", noexp.verify(KEY)["expired"])
 dead = auth.KeyStore(fetch=active_keys, clock=lambda: kclock["now"])
 check("a fresh store reads the keys once", dead.verify(KEY) is not None)
 dead.fetch = lambda: (_ for _ in ()).throw(RuntimeError("snowflake down"))

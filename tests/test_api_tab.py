@@ -30,7 +30,8 @@ DBF = os.path.join(tempfile.mkdtemp(), "api_admin.db")
 db = sqlite3.connect(DBF)
 db.executescript("""
 CREATE TABLE api_keys (key_id TEXT PRIMARY KEY, client TEXT NOT NULL, key_hash TEXT NOT NULL, key_hint TEXT, note TEXT,
-                       created_at TEXT NOT NULL, created_by TEXT, active BOOLEAN NOT NULL DEFAULT 1, revoked_at TEXT, revoked_by TEXT);
+                       created_at TEXT NOT NULL, created_by TEXT, active BOOLEAN NOT NULL DEFAULT 1, revoked_at TEXT, revoked_by TEXT,
+                       expires_at TEXT);
 CREATE TABLE api_calls (ts TEXT, key_id TEXT, client TEXT, path TEXT, query TEXT, status INTEGER, rows_n INTEGER, ms INTEGER, ip TEXT);
 """)
 db.commit()
@@ -75,6 +76,10 @@ check("the table holds Hertshten's hash and hint, not the key", len(stored) == 1
       and stored[0][1] == api_admin.key_hash(new["raw"]) and new["raw"] not in str(stored) and stored[0][4] == 1, stored)
 check("the key list shows it as active", any("Hertshten" in str(df.value.to_dict()) and "Active" in str(df.value.to_dict())
                                              for df in at.dataframe))
+check("the shown-once box says how long it's good for", any("good until" in s.value for s in at.success), [s.value for s in at.success])
+exp_cell = at.dataframe[0].value["Expires"].iloc[0]
+check("the list has an Expires column, about 6 months out", ("181 d" in exp_cell or "182 d" in exp_cell or "183 d" in exp_cell
+                                                            or "184 d" in exp_cell), exp_cell)
 next(b for b in at.button if b.label.startswith("I've stored it")).click().run()
 check("'I've stored it' hides the key for good", "api_new_key" not in at.session_state
       and not any(new["raw"] in c.value for c in at.code))
@@ -96,8 +101,42 @@ state = dict(rows("SELECT key_id, active FROM api_keys"))
 check("only the chosen key is revoked", state[kid] == 0 and sum(1 for v in state.values() if v) == 1, state)
 check("its row says Revoked", any("Revoked" in str(df.value.to_dict()) for df in at.dataframe))
 
-print("\nusage")
+print("\nexpiry")
 first_id = next(k for k, v in state.items() if v)
+soon = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(days=10)).isoformat(sep=" ", timespec="seconds")
+c = sqlite3.connect(DBF)
+c.execute("UPDATE api_keys SET expires_at = ? WHERE key_id = ?", (soon, first_id))
+c.commit()
+c.close()
+import api_tab                                # noqa: E402 — the same module the AppTest script imports
+api_tab._load.clear()
+at = app()
+check("a key expiring within 30 days raises a warning naming it", any(first_id in w.value and "expires in" in w.value
+                                                                     for w in at.warning), [w.value for w in at.warning])
+ext = at.selectbox(key="api_extend_pick")
+check("the Extend box offers only active keys", len(ext.options) == 1 and first_id in ext.options[0], ext.options)
+next(b for b in at.button if b.label.startswith("Extend to")).click().run()
+new_exp = rows(f"SELECT expires_at FROM api_keys WHERE key_id = '{first_id}'")[0][0]
+check("Extend moves the expiry 6 months from today", dt.datetime.fromisoformat(new_exp) > dt.datetime.now() + dt.timedelta(days=180),
+      new_exp)
+check("and the warning is gone", not any(first_id in w.value for w in at.warning))
+past = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - dt.timedelta(days=2)).isoformat(sep=" ", timespec="seconds")
+c = sqlite3.connect(DBF)
+c.execute("UPDATE api_keys SET expires_at = ? WHERE key_id = ?", (past, first_id))
+c.commit()
+c.close()
+api_tab._load.clear()
+at = app()
+st_col = at.dataframe[0].value.set_index("Key ID").loc[first_id]
+check("an expired key reads 'Expired' and the warning says the API refuses it", st_col["Status"] == "Expired"
+      and any("EXPIRED" in w.value for w in at.warning), (st_col["Status"], [w.value for w in at.warning]))
+c = sqlite3.connect(DBF)
+c.execute("UPDATE api_keys SET expires_at = ? WHERE key_id = ?",
+          ((dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(days=150)).isoformat(sep=" ", timespec="seconds"), first_id))
+c.commit()
+c.close()
+
+print("\nusage")
 now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 c = sqlite3.connect(DBF)
 c.executemany("INSERT INTO api_calls VALUES (?,?,?,?,?,?,?,?,?)", [
@@ -107,7 +146,6 @@ c.executemany("INSERT INTO api_calls VALUES (?,?,?,?,?,?,?,?,?)", [
     ((now - dt.timedelta(days=40)).isoformat(sep=" ", timespec="seconds"), first_id, "Hertshten", "/v1/fob", "", 200, 9, 9, "203.0.113.5")])
 c.commit()
 c.close()
-import api_tab                                # noqa: E402 — the same module the AppTest script imports
 api_tab._load.clear()                         # calls written behind the tab's back: drop its 60-second cache
 at = app()
 keys = at.dataframe[0].value

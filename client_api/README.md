@@ -7,6 +7,8 @@ soybeans and wheat, over the **last 12 months** of published sheets.
   we'll tell you before it does.
 - **Your key:** send it in the `X-API-Key` header on every call. Keep it private: it identifies your organisation,
   and every call made with it is logged. Never put it in a URL. If it may have leaked, tell us and we'll replace it.
+- **Keys are good for 6 months.** We'll renew yours before then (normally the same key, extended). An expired key gets
+  `401` with the message "This API key expired on YYYY-MM-DD".
 - **Formats:** JSON (default) or CSV (`format=csv`, opens directly in Excel).
 - **Updates:** one sheet per business day, normally saved mid-to-late afternoon Central time. Data is at most
   15 minutes behind the saved sheet.
