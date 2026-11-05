@@ -147,6 +147,41 @@ carries (`corn-exporter-dashboard`):
   - Widget keys start with `rfv_` (the admin portal shares one session state across both pages). The page uses `px.bar/line/area/scatter`,
   checked under this repo's `plotly<6` pin (5.24.1) as well as 6.x.
 
+## Client API (`client_api/`, pilot 2026-11-05)
+
+Kolten: "River FOB values for a pilot ... one group (client) for now with the key ... CIF, Barge Freight, and FOB values for
+corn, soybeans & Wheat for the past year". A small read-only HTTPS API for clients. It is NOT part of the Streamlit app:
+it runs on its own droplet (`client_api/DEPLOY.md`) and its guide for the client is `client_api/README.md`.
+
+- **What it serves:** saved sheets only (never the working sheet), a rolling 12 months (365 days, Central time), corn /
+  soybeans / wheat.
+  - CIF in $/bu.
+  - Freight in % of tariff (stored 7.25, served 725).
+  - FOB for the 18 live locations (`BLOCK_LAYOUT`, so no Gulfport), computed by `fob_model.compute_fob_grid`. The
+    newest sheet's 360 values matched the portal exactly on 11-05.
+  - Months get their year and contract name through `net_carry_data.place_columns` (Jan on a Nov sheet = 2027-01 vs
+    ZCH27). An older sheet's Spot column = the sheet's own month, `spot: true`.
+  - No futures prices.
+- **The door into Snowflake** (`client_api/sql/setup.sql`, step 1 run 11-05):
+  - Schema `RIVER_FOB.CLIENT_API` holds 3 SECURE views (`CIF_12M`, `FREIGHT_12M`, `CALENDAR_12M`), already cut to 366
+    days and the 3 commodities / 7 regions.
+  - `RIVER_FOB_API_ROLE` has SELECT on those views and nothing else (plus USAGE on COMPUTE_WH).
+  - Step 2 (user `RIVER_FOB_API_SVC`, key made on the server, network policy = the server's IP) waits for the droplet.
+  - **If you rename or reshape `cif_history` / `freight_history` / `calendar_history`, update the views too.**
+- **Keys:** `rfob_` + 256 random bits, header `X-API-Key`.
+  - The server stores only SHA-256 hashes (`/etc/river-fob-api/keys.json`) and re-reads the file on change, so a
+    revoke is instant.
+  - `python -m client_api.manage_keys create|list|revoke`.
+  - Rate limits: 60 calls a minute, 5,000 a day per key.
+- **Logging and errors:**
+  - Every call is logged (key id, client, path, our own parameters, status, rows, ms). A stray parameter's value is
+    logged as `***`, so a key put in a URL by mistake is never written.
+  - No /docs page. An unknown parameter is a 400. Errors carry no internals.
+- **Cache:** the data is re-read every 15 minutes in the background. A stale cache answers at once (the cold load
+  is ~20 s, and the server warms it at start-up). With Snowflake down it keeps serving and still moves the window at
+  midnight.
+- Tests: `python tests/test_client_api.py` (52 checks: data, keys, refusals, rate limit, outage, cache, log).
+
 ## 📦 Deliverable Stocks (2026-10-24)
 
 Kolten: "add these as a tab ... Call it Deliverable Stocks ... put it on the cash vs DVE tab ... below the cash vs DVE chart"; "start from

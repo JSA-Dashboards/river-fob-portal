@@ -1,0 +1,6 @@
+# The client API server only (client_api/). Installed in /opt/river-fob-api/venv; freeze the result into
+# requirements.lock on the server after the first install, and upgrade deliberately.
+fastapi>=0.115
+uvicorn>=0.30
+snowflake-connector-python>=3.12
+cryptography>=43
