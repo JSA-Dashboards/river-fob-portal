@@ -31,6 +31,17 @@ LAST_DONE only moves past a day once it's handled, so a failed day is retried.
 Most polls still exit early: once today is handled, or when no new sheet has come
 in, a run neither scans far nor queries Snowflake.
 
+SEND/RECEIVE BEFORE GIVING UP (2026-11-05). Outlook COM reads classic Outlook's
+offline copy of the mailbox, which is only as fresh as its last sync, and the
+laptop sleeps (Modern Standby). On Wed 11/04, Doug's 2:00 PM sheet was invisible
+to the 2:20 run, which ran seconds after the laptop woke. The laptop then slept
+through 3-7 PM, and the 2:59 AM wake-up run also looked before Outlook synced.
+Only the 3:39 AM run saved it. So a run that finds no new sheet now asks
+Outlook to Send/Receive and waits until the Inbox has stopped changing while
+Outlook says it's connected (`_sync_outlook`, at most SYNC_MAX_S), then looks
+once more. A run that finds the sheet at once never waits. The task's sign-in and
+unlock runs also start 3 minutes late, so the network is back before they look.
+
 LOG. Every run appends to logs/bidsheet_import.log (rotated; gitignored), with the
 full traceback if it crashes. Task Scheduler keeps none of the output. Exit codes:
 0 = done / nothing to do, 1 = crash, 2 = a day couldn't get its futures (the save
@@ -70,6 +81,13 @@ MAX_SCAN = 5000               # safety cap on inbox items walked; the date cutof
 # costs one wider look back (CATCHUP_DAYS) and one Snowflake check.
 LAST_DONE = os.path.join(tempfile.gettempdir(), "river_fob_bidsheet_last_done.txt")
 LOG_PATH = os.path.join(HERE, "logs", "bidsheet_import.log")
+# Waiting for Outlook to catch up (_sync_outlook). The Inbox counts as synced once it
+# hasn't changed for SYNC_SETTLE_S while Outlook reports a connection, and never sooner
+# than SYNC_MIN_S, because a Send/Receive takes a few seconds to start.
+SYNC_MAX_S, SYNC_SETTLE_S, SYNC_MIN_S, SYNC_STEP_S = 120, 15, 20, 3
+CONNECTED = 500               # OlExchangeConnectionMode: 500-700 cached + connected, 800 online; below = offline / disconnected
+MODE_NAMES = {0: "no Exchange", 100: "offline", 200: "cached offline", 300: "disconnected", 400: "cached disconnected",
+              500: "connected (headers)", 600: "connected (drizzle)", 700: "connected", 800: "online"}
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -101,6 +119,74 @@ def _inbox_items():
                 raise
             log.warning("Outlook didn't answer (%s); retrying in 20s.", e)
             time.sleep(20)
+
+
+def wait_until_settled(probe, clock=time.monotonic, sleep=time.sleep, settle=SYNC_SETTLE_S, least=SYNC_MIN_S,
+                       most=SYNC_MAX_S, step=SYNC_STEP_S):
+    """Poll `probe()` -> (signature, connected) until neither has changed for `settle`
+    seconds while connected, and at least `least` seconds have passed. Reconnecting
+    restarts the clock like new mail does: an Inbox that sat still while offline
+    hasn't synced yet. Gives up after `most`. -> (settled, seconds waited). Pure, so
+    it is tested with a fake clock."""
+    start = clock()
+    last, since = object(), start
+    while True:
+        sig, connected = probe()
+        now = clock()
+        if (sig, connected) != last:
+            last, since = (sig, connected), now
+        elif connected and now - since >= settle and now - start >= least:
+            return True, now - start
+        if now - start >= most:
+            return False, now - start
+        sleep(step)
+
+
+def _sync_outlook():
+    """Make classic Outlook Send/Receive and wait for its Inbox to settle (see SEND/RECEIVE
+    above). Returns True when it ran, settled or not: the caller then looks again. False
+    when Outlook couldn't be asked, with no second look (the first one got the same Outlook)."""
+    try:
+        import win32com.client
+        ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        inbox = ns.GetDefaultFolder(6)
+        ns.SendAndReceive(False)                          # starts the sync; it runs in the background
+    except Exception as e:                                # noqa: BLE001 - never a reason to crash the run
+        log.warning("Couldn't ask Outlook to Send/Receive (%s); not looking again.", e)
+        return False
+    state = {"mode": None}
+
+    def probe():
+        items = inbox.Items
+        items.Sort("[ReceivedTime]", True)
+        first = items.GetFirst()
+        try:
+            state["mode"] = int(ns.ExchangeConnectionMode)
+        except Exception:                                 # noqa: BLE001 - not an Exchange profile: nothing to wait for
+            state["mode"] = None
+        mode = state["mode"]
+        return (items.Count, str(first.ReceivedTime) if first is not None else None), mode in (None, 0) or mode >= CONNECTED
+
+    try:
+        settled, secs = wait_until_settled(probe)
+    except Exception as e:                                # noqa: BLE001
+        log.warning("Lost Outlook while waiting for its Send/Receive (%s); looking again anyway.", e)
+        return True
+    mode = MODE_NAMES.get(state["mode"], state["mode"])
+    if settled:
+        log.info("Nothing new at first look; Outlook Send/Receive done, Inbox settled after %ds (%s). Looking again.", secs, mode)
+    else:
+        log.warning("Nothing new at first look; Outlook still catching up after %ds (%s). Looking again with what it has.",
+                    secs, mode)
+    return True
+
+
+def _pending(sheets, done, force, since):
+    """The sheet dates a run handles, oldest first. --force alone keeps its old meaning:
+    re-save the newest sheet only, never a sweep of past days that might hold hand corrections."""
+    if force and not since:
+        return [max(sheets)] if sheets else []
+    return sorted(d for d in sheets if done is None or d > done)
 
 
 def _bidsheets_since(cutoff):
@@ -212,12 +298,9 @@ def main():
     else:
         cutoff = floor
     sheets = _bidsheets_since(cutoff)
-    if force and not since:
-        # --force alone keeps its old meaning: re-save the newest sheet only, never a
-        # sweep of past days that might hold hand corrections.
-        pending = [max(sheets)] if sheets else []
-    else:
-        pending = sorted(d for d in sheets if done is None or d > done)
+    if not _pending(sheets, done, force, since) and _sync_outlook():
+        sheets = _bidsheets_since(cutoff)         # classic Outlook may have been showing a stale copy
+    pending = _pending(sheets, done, force, since)
     if not pending:
         log.info("No new Bid Sheet since %s (newest found: %s); nothing to do.",
                  cutoff, max(sheets) if sheets else "none")

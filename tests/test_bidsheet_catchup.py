@@ -113,13 +113,22 @@ check("today, after the 7 PM reopen, takes the captured close (the live board is
 F._futures_source = lambda as_of, now: "close" if as_of < now.date() else "live"
 TODAY = dt.date.today()
 DAYS = {"thu": TODAY - dt.timedelta(days=4), "fri": TODAY - dt.timedelta(days=3), "today": TODAY}
-SAVES, MARK = [], {"v": None}
+SAVES, MARK, SYNCS = [], {"v": None}, []
 
 
-def run(argv, sheets, archived, done, fail_on=()):
+def run(argv, sheets, archived, done, fail_on=(), first_look=None, sync_ok=True):
+    """`first_look` = what classic Outlook shows before a Send/Receive (None = already everything)."""
     SAVES.clear()
+    SYNCS.clear()
     MARK["v"] = done
-    F._bidsheets_since = lambda cutoff: {d: v for d, v in sheets.items() if d >= cutoff}
+    looks = []
+
+    def since(cutoff):
+        shown = sheets if (first_look is None or looks) else first_look
+        looks.append(cutoff)
+        return {d: v for d, v in shown.items() if d >= cutoff}
+    F._bidsheets_since = since
+    F._sync_outlook = lambda: SYNCS.append(1) or sync_ok
     F._last_done = lambda: MARK["v"]
     F._mark_done = lambda d: MARK.__setitem__("v", d) if (MARK["v"] is None or d > MARK["v"]) else None
     F.db._backend = lambda: "snowflake"
@@ -163,6 +172,46 @@ check("--force alone re-saves only the newest sheet, not a sweep of past days",
 rc = run(["--dry-run"], S, archived=[DAYS["thu"]], done=DAYS["thu"])
 check("--dry-run prices both days but commits nothing and leaves the done note alone",
       rc == 0 and [s[2] for s in SAVES] == [False, False] and MARK["v"] == DAYS["thu"], (SAVES, MARK["v"]))
+check("a run that finds its sheets at once never asks Outlook to Send/Receive", SYNCS == [], SYNCS)
+
+print("\nfetch_bidsheet_email: Outlook's offline copy is stale (11/04: the 2:00 PM sheet unseen at 2:20)")
+stale = {DAYS["thu"]: S[DAYS["thu"]]}
+rc = run([], S, archived=[DAYS["thu"]], done=DAYS["thu"], first_look=stale)
+check("nothing new at first look -> one Send/Receive, a second look, and both days are saved",
+      rc == 0 and SYNCS == [1] and SAVES == [(DAYS["fri"], "close", True), (DAYS["today"], "live", True)], (SYNCS, SAVES))
+rc = run([], stale, archived=[DAYS["thu"]], done=DAYS["thu"])
+check("still nothing after the Send/Receive -> nothing saved, done note unchanged",
+      rc == 0 and SYNCS == [1] and SAVES == [] and MARK["v"] == DAYS["thu"], (SYNCS, SAVES, MARK["v"]))
+rc = run([], S, archived=[DAYS["thu"]], done=DAYS["thu"], first_look=stale, sync_ok=False)
+check("Outlook can't be asked -> no second look (the run saves nothing and exits 0)",
+      rc == 0 and SYNCS == [1] and SAVES == [], (SYNCS, SAVES))
+rc = run([], S, archived=[], done=DAYS["today"], first_look={})
+check("once today is done, a poll still exits at once: no Send/Receive", rc == 0 and SYNCS == [], SYNCS)
+
+print("\nfetch_bidsheet_email: waiting for the Inbox to settle (fake clock, 3 s steps)")
+
+
+def settle(script, **kw):
+    """`script` = the (signature, connected) the probe returns at each poll; the last one repeats."""
+    t = {"now": 0.0}
+    seq = iter(script)
+    last = {"v": None}
+
+    def probe():
+        last["v"] = next(seq, last["v"])
+        return last["v"]
+    return F.wait_until_settled(probe, clock=lambda: t["now"], sleep=lambda s: t.__setitem__("now", t["now"] + s), **kw)
+
+
+ok, secs = settle([((10, "a"), True)])
+check("an Inbox that never changes, connected: settled at the 20 s floor, not sooner", ok and secs == 21, (ok, secs))
+ok, secs = settle([((10, "a"), True)] * 4 + [((11, "b"), True)])
+check("new mail at 12 s restarts the 15 s settle clock (settled at 27 s)", ok and secs == 27, (ok, secs))
+ok, secs = settle([((10, "a"), False)] * 30 + [((10, "a"), True)])
+check("offline / disconnected never counts as settled; it settles 15 s after Outlook connects",
+      ok and secs == 105, (ok, secs))
+ok, secs = settle([((10, "a"), False)])
+check("never connects -> gives up at the 120 s limit", (not ok) and secs == 120, (ok, secs))
 
 print("\n" + ("ALL PASS" if not FAILS else "FAILURES: %s" % FAILS))
 sys.exit(1 if FAILS else 0)

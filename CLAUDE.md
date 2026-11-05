@@ -258,6 +258,28 @@ loaded by hand. The 5 PM alert did fire. So now:
   - The task had also been set not to start on battery.
   - A run at sign-in/unlock catches up whatever the afternoon missed, with the
     right settlement.
+- **Outlook's offline copy, and the Send/Receive (2026-11-05).** Outlook COM reads
+  classic Outlook's offline copy, which is only as fresh as its last sync.
+  - **Wed 11/04:** Doug's sheet came at 2:00 PM. The laptop flickered in and out of
+    Modern Standby from 2:10 and slept from 2:33 PM to 2:59 AM, so the 3-7 PM runs
+    never fired.
+  - Two runs did fire, each seconds after the laptop woke: the one at 2:20 PM and
+    the one at 2:59 AM. Both looked before Outlook had synced and saw no sheet
+    ("newest found: none").
+  - The 3:39 AM run saved it, with 11/04's settlement.
+  - **Fix:** a run that finds no new sheet now asks Outlook to Send/Receive
+    (`_sync_outlook`). It waits until the Inbox has stopped changing for 15 s while
+    `ExchangeConnectionMode` says connected, with a 20 s floor, a 120 s cap and
+    reconnecting restarting the clock (`wait_until_settled`, pure, tested on a fake
+    clock). Then it looks once more. A run that sees the sheet at once never waits.
+    The log says "Outlook Send/Receive done, Inbox settled after Ns".
+  - Live check on 11/05: settled after 21 s (connected), the whole run took 27 s.
+  - The task's sign-in and unlock triggers now start **3 minutes late**
+    (`<Delay>PT3M</Delay>`, set 11/05; the XML before and after is in that session's
+    scratchpad), so the network is back before they look.
+  - None of this helps a laptop that stays asleep through 3-7 PM. That needs the
+    droplet/Graph importer (`fetch_bidsheet_graph.py`), still waiting on IT's
+    Mail.Read grant.
 - **Columbus Day / Veterans Day.** CBOT grains trade on both days, and Doug
   sends a sheet. The 5 PM alert's own `HOLIDAYS` list correctly counts both as
   working days.
