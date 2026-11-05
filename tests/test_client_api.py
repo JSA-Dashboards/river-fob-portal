@@ -312,6 +312,16 @@ for i in range(5):
     cap.add({"ts": str(i)})
 check("past the cap the oldest are dropped and counted", [r["ts"] for r in cap._buf] == ["2", "3", "4"] and cap.dropped == 2)
 
+written = []
+sd = auth.CallLog(write=lambda rows: written.extend(rows), start=False)
+with TestClient(A.create_app(store=store, loader=data.Loader(fetch=fetch, today=lambda: TODAY), limiter=lim,
+                             today=lambda: TODAY, calls=sd)) as tc:       # `with` runs the app's startup and shutdown
+    tc.get("/v1/dates", headers=H)
+    tc.get("/v1/fob")
+    pending = len(sd._buf)
+check("a shutdown (restart / deploy) writes the calls still in the buffer (go-live bug: atexit ran too late)",
+      pending == 2 and len(written) == 2 and not sd._buf, (pending, len(written)))
+
 C = {"calls_table": "api_calls"}
 keys = {k["key_id"]: k for k in api_admin.list_keys(DB, "?", keys_table="api_keys", **C)}
 h = keys[rec["key_id"]]

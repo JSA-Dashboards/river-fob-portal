@@ -18,7 +18,8 @@ internals in an error, every call logged (who, what, how many rows), a rate limi
 """
 from __future__ import annotations
 
-import atexit
+import asyncio
+import contextlib
 import csv
 import io
 import json
@@ -92,9 +93,17 @@ def create_app(store: auth.KeyStore | None = None, loader: data.Loader | None = 
     limiter = limiter or auth.RateLimiter()
     if warm:
         loader.warm()
-    if calls is not None:
-        atexit.register(calls.flush)                              # a restart writes what's buffered, not loses it
-    app = FastAPI(title="River FOB API", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        yield
+        # Shutdown (a restart, a deploy, a reboot): write the buffered calls NOW. uvicorn waits for this step; an atexit
+        # handler ran too late to (found at go-live 2026-11-05: a restart lost the calls of the last 5-minute batch).
+        if calls is not None:
+            n = await asyncio.to_thread(calls.flush)
+            log.warning("Shutdown: wrote %d buffered call record(s)", n)
+
+    app = FastAPI(title="River FOB API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     alog = None
     if access_log:
         try:

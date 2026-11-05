@@ -269,7 +269,11 @@ class Loader:
         threading.Thread(target=lambda: self._safe_get(), daemon=True, name="river-fob-api-warm").start()
 
     def _safe_get(self):
+        import logging
+        log = logging.getLogger("river_fob_api")
         try:
-            self.get()
+            ds = self.get()
+            log.warning("Data loaded: %d sheets (%s .. %s), %d FOB rows", len(ds["dates"]),
+                        ds["dates"][-1] if ds["dates"] else "-", ds["dates"][0] if ds["dates"] else "-", len(ds["fob"]))
         except Exception:                                    # noqa: BLE001 — the first client call will retry and report
-            pass
+            log.exception("Start-up data load failed; the first call will try again")
