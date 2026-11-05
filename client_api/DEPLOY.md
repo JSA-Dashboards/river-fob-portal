@@ -25,6 +25,16 @@ managed in River FOB's 🔑 API tab). Kolten chose this, "the server's own addre
 - **Two go-live fixes:**
   - The buffered calls are now written in the app's shutdown, because atexit ran too late and a restart lost a batch.
   - Only `/v1/` calls go to the tab's log, because scanners hit `/` and `/favicon.ico` within the first hour.
+- **Uptime check** (`client_api/monitor/uptime.sh`, 2026-11-05):
+  - **Where it runs:** on the OTHER droplet (137.184.195.51), every 5 minutes, from crontab line
+    `*/5 * * * * /bin/bash /opt/river-fob-portal/client_api/monitor/uptime.sh` (that droplet's River FOB clone;
+    update = `git pull`).
+  - **What counts as up:** HTTPS with a trusted certificate, `"data":"ok"`, and the certificate more than 24 h from
+    expiry. One retry 30 s later before it counts as down.
+  - **Reporting:** it pings healthchecks.io check `river-fob-api-uptime` (`/fail` with the reason when down), with the
+    project ping key in `/opt/alerting/alert.conf`. Log: `journalctl -t river-fob-api-uptime`.
+  - **The check itself:** auto-create was refused (404: the healthchecks project is at its check limit, as on 10-23), so
+    Kolten makes it by hand: slug `river-fob-api-uptime`, Simple schedule, period 5 min, grace 10 min.
 - **Deploying a change:** from the PC, in this repo, run
   `tar --exclude=__pycache__ -cf - client_api fob_model.py net_carry_data.py | ssh root@162.243.174.38 'tar -xf - -C /opt/river-fob-api && chown -R root:root /opt/river-fob-api && systemctl restart river-fob-api'`.
   The journal should then show `Shutdown: wrote N buffered call record(s)` and `Data loaded: ...`.
