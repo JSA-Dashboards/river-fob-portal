@@ -8,8 +8,11 @@ upserts its CIF + barge freight into the River FOB Snowflake archive via
 `bidsheet`. Runs on the Droplet via cron — no desktop, no Outlook.
 
 Mailbox = GRAPH_BIDSHEET_MAILBOX, else GRAPH_SENDER (= basis-tracker@jpsi.com).
-Needs in the .env: GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
-(+ GRAPH_SENDER), plus USE_SNOWFLAKE + SNOWFLAKE_* for RIVER_FOB.
+Needs in the .env: GRAPH_TENANT_ID, and the reading app's GRAPH_READ_CLIENT_ID /
+GRAPH_READ_CLIENT_SECRET (asked of IT 2026-11-05: a separate read-only app limited
+to basis-tracker@jpsi.com). Without them it falls back to GRAPH_CLIENT_ID /
+GRAPH_CLIENT_SECRET (the sending app, which has no Mail.Read). Plus USE_SNOWFLAKE +
+SNOWFLAKE_* for RIVER_FOB. Doug's sheet has to be delivered to that mailbox too.
 
     python fetch_bidsheet_graph.py            # fetch + save (idempotent)
     python fetch_bidsheet_graph.py --check     # verify auth + find the email, save nothing
@@ -58,12 +61,17 @@ def _mailbox():
 
 
 def _token():
+    """An app-only token. Reading mail uses its OWN app registration when one is set
+    (GRAPH_READ_CLIENT_ID / GRAPH_READ_CLIENT_SECRET: a read-only app IT limits to the one
+    mailbox, 2026-11-05). The GRAPH_CLIENT_* pair is the "Basis Tracker" sending app, which
+    check_bidsheet_fresh.py's 5 PM alert needs unchanged. That pair is the fallback."""
     import msal
-    tenant, client, secret = (_cfg("GRAPH_TENANT_ID"), _cfg("GRAPH_CLIENT_ID"),
-                              _cfg("GRAPH_CLIENT_SECRET"))
+    tenant = _cfg("GRAPH_TENANT_ID")
+    client = _cfg("GRAPH_READ_CLIENT_ID") or _cfg("GRAPH_CLIENT_ID")
+    secret = _cfg("GRAPH_READ_CLIENT_SECRET") if _cfg("GRAPH_READ_CLIENT_ID") else _cfg("GRAPH_CLIENT_SECRET")
     if not (tenant and client and secret):
-        raise RuntimeError("Graph not configured — need GRAPH_TENANT_ID, "
-                           "GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET in the .env.")
+        raise RuntimeError("Graph not configured — need GRAPH_TENANT_ID and GRAPH_READ_CLIENT_ID + "
+                           "GRAPH_READ_CLIENT_SECRET (or GRAPH_CLIENT_ID + GRAPH_CLIENT_SECRET) in the .env.")
     app = msal.ConfidentialClientApplication(
         client_id=client,
         authority=f"https://login.microsoftonline.com/{tenant}",
