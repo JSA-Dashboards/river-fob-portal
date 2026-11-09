@@ -326,6 +326,28 @@ check("to the list", [r["emailAddress"]["address"] for r in m["toRecipients"]] =
 check("one inline attachment per picture", len(m["attachments"]) == 1 and m["attachments"][0]["isInline"] and m["attachments"][0]["contentId"] == "cashdel_corn", m["attachments"])
 check("replies go to a person", m["replyTo"][0]["emailAddress"]["address"] == E.REPLY_TO, "")
 check("not filed in the shared mailbox's Sent Items", sent["msg"]["saveToSentItems"] is False, "")
+check("a send without a list has no BCC (the --to test)", m["bccRecipients"] == [], m["bccRecipients"])
+
+requests.post, E.CB._token = post, lambda cfg: "t"
+try:
+    E.send({"GRAPH_SENDER": "x@jpsi.com"}, ["kolten@jpsi.com"], "S", "<b>", {}, bcc=["list@jpsi.com"])
+finally:
+    requests.post, E.CB._token = real_post, real_token
+m = sent["msg"]["message"]
+check("the list is on BCC only", [r["emailAddress"]["address"] for r in m["bccRecipients"]] == ["list@jpsi.com"]
+      and [r["emailAddress"]["address"] for r in m["toRecipients"]] == ["kolten@jpsi.com"], m)
+
+print("recipients")
+for k in ("RIVER_EMAIL_TO", "RIVER_EMAIL_BCC"):
+    os.environ.pop(k, None)
+check("nothing set: nobody, so the job is off", E.recipients() == ([], []), E.recipients())
+os.environ["RIVER_EMAIL_BCC"] = "list@jpsi.com"
+check("the list set: Kolten on To, the list on BCC", E.recipients() == ([E.NOTIFY], ["list@jpsi.com"]), E.recipients())
+check("the list is not on To", "list@jpsi.com" not in E.recipients()[0])
+os.environ["RIVER_EMAIL_TO"] = "other@jpsi.com"
+check("RIVER_EMAIL_TO overrides the To only", E.recipients() == (["other@jpsi.com"], ["list@jpsi.com"]), E.recipients())
+for k in ("RIVER_EMAIL_TO", "RIVER_EMAIL_BCC"):
+    os.environ.pop(k, None)
 
 print("\n" + ("ALL PASS" if not FAILS else f"FAILED: {FAILS}"))
 sys.exit(1 if FAILS else 0)

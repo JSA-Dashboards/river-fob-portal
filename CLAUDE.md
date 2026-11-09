@@ -123,7 +123,7 @@ the upcoming delivery month, Illinois zones with their terminals ("show the Zone
 - **When:** droplet cron every 10 minutes, 4:05-7:55 PM CT weekdays (`deploy/run_river_email.sh` under cron-alert; the bid import ends about 4:00). It sends once,
   the first time today's sheet is saved with futures and today's Illinois bids are in. On the last run it sends without today's bids, or tells Kolten nothing went
   out if there's no sheet. A re-save after the send doesn't resend. State is `logs/.river_email_state.json`.
-- **Recipients:** `RIVER_EMAIL_TO` in the droplet's `.env`; unset = the job does nothing. Sent through Graph from the same mailbox as the 5 PM alert, replies to Kolten.
+- **Recipients:** the list is `RIVER_EMAIL_BCC` in the droplet's `.env` (jsagroup@jpsi.com; unset = no email), with Kolten on To, as the Inco email does (`RIVER_EMAIL_TO` overrides the To). A `--to` test has no BCC. Sent through Graph from the same mailbox as the 5 PM alert, replies to Kolten.
 - **HTML:** inline styles and tables only, solid banner colours, charts as inline `cid:` PNGs from `vl_convert` (the watermark is composited with Pillow).
   Dates go to Vega as timestamps: a bare `YYYY-MM-DD` is UTC and lands a day early on a Central-time box.
 - **Signature (Kolten 2026-11-09: "add my signature"):** `email_signature/` (signature.html + sig_N.png, `cid:` inline) is his Outlook signature. **It is gitignored because this repo is PUBLIC** and the Teams / WhatsApp links are his.

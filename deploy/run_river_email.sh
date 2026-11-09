@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_river_email.sh: the River FOB daily email, run by cron on the Droplet every 10 minutes, 4:05 to 7:55 PM CT on weekdays.
 #
-# Runs river_email.py, which sends at most once a day and does nothing until RIVER_EMAIL_TO is set in the repo .env.
+# Runs river_email.py, which sends at most once a day and does nothing until RIVER_EMAIL_BCC or RIVER_WA_CHATS is set in the repo .env.
 # A non-zero exit means repeated failures, and cron-alert reports it. flock prevents overlap. One log a day, pruned after 30 days.
 set -uo pipefail
 

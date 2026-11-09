@@ -16,7 +16,7 @@ Runs on the Droplet every 10 minutes, 4:05 to 7:55 PM CT on weekdays (deploy/run
 bids if only those are missing (the as-of date shows it), or tells Kolten nothing went out if there's no sheet. A sheet saved again after the
 send doesn't send again.
 
-    python river_email.py                     # the scheduled run (does nothing until RIVER_EMAIL_TO is set)
+    python river_email.py                     # the scheduled run (does nothing until RIVER_EMAIL_BCC is set)
     python river_email.py --preview out.html  # write the newest sheet's email to a file; send nothing
     python river_email.py --dry-run           # say what today's run would do; send nothing
     python river_email.py --to a@jpsi.com     # send the newest sheet's email to that address only; no state kept
@@ -24,7 +24,7 @@ send doesn't send again.
     python river_email.py --wa-to CHAT_ID     # post the newest sheet's pictures to that WhatsApp chat only; no state kept
 
 Env (the repo .env on the droplet): USE_SNOWFLAKE + SNOWFLAKE_*, GRAPH_* (check_bidsheet_fresh._graph_cfg), MASSIVE_API_KEY (fed funds),
-RIVER_EMAIL_TO (comma-separated recipients), RIVER_WA_CHATS + WA_API_KEY (river_whatsapp.py).
+RIVER_EMAIL_BCC (the list, comma-separated; Kolten: "move the list to BCC like Inco"), RIVER_EMAIL_TO (overrides the To, which is Kolten), RIVER_WA_CHATS + WA_API_KEY (river_whatsapp.py).
 
 Exit codes: 0 = sent, not due, or a failure the next run will retry; 3 = the third failure of a day, every 12th after, or a failure on the last
 run (cron-alert reports those, so a blip doesn't email anyone).
@@ -481,7 +481,14 @@ def bids_current(moves, today_iso):
     return all(moves.get(c) and moves[c]["table"]["latest"] == today_iso for c in COMMODITIES)
 
 
-def send(cfg, recips, subj, html, images):
+def recipients():
+    """(to, bcc). The list goes on BCC with Kolten on To, as the Inco email does, so a Reply All can't reach the whole list. No list set = nobody."""
+    bcc = CB._split(os.environ.get("RIVER_EMAIL_BCC"))
+    to = CB._split(os.environ.get("RIVER_EMAIL_TO")) or ([NOTIFY] if bcc else [])
+    return to, bcc
+
+
+def send(cfg, recips, subj, html, images, bcc=()):
     """Graph sendMail with `images` {cid: png} as inline attachments, from the same mailbox and app as the 5 PM alert."""
     import requests
     atts = [{"@odata.type": "#microsoft.graph.fileAttachment", "name": f"{cid}.png", "contentType": "image/png",
@@ -489,6 +496,7 @@ def send(cfg, recips, subj, html, images):
             for cid, png in images.items()]
     msg = {"message": {"subject": subj, "body": {"contentType": "HTML", "content": html},
                        "toRecipients": [{"emailAddress": {"address": a}} for a in recips],
+                       "bccRecipients": [{"emailAddress": {"address": a}} for a in bcc],
                        "replyTo": [{"emailAddress": {"address": REPLY_TO}}], "attachments": atts},
            "saveToSentItems": False}
     r = requests.post(f"{CB.GRAPH}/users/{quote(cfg['GRAPH_SENDER'])}/sendMail",
@@ -599,7 +607,7 @@ def main(argv=None):
         return 0
 
     state = load_state()
-    recips = CB._split(os.environ.get("RIVER_EMAIL_TO"))
+    recips, bcc = recipients()
     wa = WA.config()
     trading = today.weekday() < 5 and today_iso not in CB._skip_dates()
     email_due = bool(recips) and state.get("done_day") != today_iso
@@ -626,10 +634,10 @@ def main(argv=None):
         if action not in ("send", "send_stale") or a.dry_run:
             return 0
         if email_due:
-            send(_graph(), recips, *compose(d))
+            send(_graph(), recips, *compose(d), bcc=bcc)
             state.update(done_day=today_iso, sent_at=now.isoformat(timespec="seconds"), fails=0)
             save_state(state)
-            log.info("Email sent to %s", ", ".join(recips))
+            log.info("Email sent to %s (bcc %s)", ", ".join(recips), ", ".join(bcc))
         if wa_due:
             whatsapp_once(wa, d, state, today_iso)
             log.info("WhatsApp posted to %d chat(s)", len(wa["chats"]))
