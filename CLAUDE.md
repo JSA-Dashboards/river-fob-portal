@@ -244,7 +244,7 @@ it runs on its own droplet (`client_api/DEPLOY.md`) and its guide for the client
 Kolten: "add these as a tab ... Call it Deliverable Stocks ... put it on the cash vs DVE tab ... below the cash vs DVE chart"; "start from
 the August copy". The 💵 Cash vs Del tab draws the Cash vs Delivery chart, then two AgMarket-style charts: **Soybean / Corn Visible Stox in
 Dlv Space** (CBOT stocks in deliverable positions, thousand bu, as of each Friday). One line per year on a Jan-Dec axis, the last six
-years plus the current one thick red, and a dotted **Average [prior five years]**. All three layouts, `?view=1` included (charts only).
+years plus the current one thick red, and a dotted **Average [five years, leaving out the last completed one]** (2020-2024 in 2026, the AgMarket sheet's window; Kolten 2026-11-09). All three layouts, `?view=1` included (charts only).
 **One chart at a time, following the tab's Commodity box** (`cashdel_commodity`; Kolten 2026-10-25: "if its corn just show corn ... when
 beans are filtered switch to beans"); Wheat shows a note (no stocks history). The entry box still takes both totals, since one report gives both.
 

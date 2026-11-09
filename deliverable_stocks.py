@@ -202,7 +202,8 @@ def chart_years(series: dict, current: int, back: int = 6) -> list[int]:
     return [y for y in range(current - back, current + 1) if y in have]
 
 
-def average_years(series: dict, current: int, n: int = 5) -> list[int]:
-    """The `n` completed years before `current` that have data (the dotted 'Average [first-last]' line)."""
+def average_years(series: dict, current: int, n: int = 5, skip: int = 1) -> list[int]:
+    """The years behind the dotted 'Average [first-last]' line: `n` years, leaving out the `skip` most recent completed ones, as the
+    AgMarket sheet's Average column does (Kolten 2026-11-09: in 2026 it's 2020-2024, not 2021-2025). Rolls forward each January."""
     have = {d.year for d in series}
-    return [y for y in range(current - n, current) if y in have]
+    return [y for y in range(current - n - skip, current - skip) if y in have]

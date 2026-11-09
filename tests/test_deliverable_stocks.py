@@ -51,7 +51,8 @@ for y in range(2019, 2027):
     for k in range(52 if y < 2026 else 24):
         series[f + dt.timedelta(days=7 * k)] = 1000.0 * (y - 2018) + k
 check("chart years = six back + current", ds.chart_years(series, 2026) == [2020, 2021, 2022, 2023, 2024, 2025, 2026])
-check("average years = the five before the current", ds.average_years(series, 2026) == [2021, 2022, 2023, 2024, 2025])
+check("average years leave out the last completed year, as the sheet's Average [2020-2024] does", ds.average_years(series, 2026) == [2020, 2021, 2022, 2023, 2024], ds.average_years(series, 2026))
+check("the window rolls forward a year", ds.average_years(series, 2027) == [2021, 2022, 2023, 2024, 2025], ds.average_years(series, 2027))
 check("a year with no data is left out", ds.chart_years({D(2024, 1, 5): 1.0, D(2026, 1, 2): 1.0}, 2026) == [2024, 2026])
 pts = ds.season_points(series, [2024])
 check("season points sit on the REF_YEAR axis", all(p["x"].year == ds.REF_YEAR for p in pts) and pts[0]["date"] == D(2024, 1, 5))

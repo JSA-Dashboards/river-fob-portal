@@ -1941,7 +1941,7 @@ def _render_cashdel_chart():
 
 # ── 📦 Deliverable Stocks (Kolten 2026-10-21/24) ───────────────────────────────────────────────────────────────────────────
 # CBOT corn and soybean stocks in deliverable positions, weekly, as the AgMarket "Visible Stox in Dlv Space" charts show them:
-# one line per year on a Jan-Dec axis, the current year thick red, the prior five years' average dotted. Typed in on this tab
+# one line per year on a Jan-Dec axis, the current year thick red, a five-year average dotted (2020-2024 in 2026). Typed in on this tab
 # (editors only) from CME's Tuesday "Stocks of Grain" report — CME's terms bar pulling it automatically (deliverable_stocks.py);
 # 2020 to mid-June 2026 came from the old FOB Sheet workbook (import_deliverable_stocks.py).
 DS_TITLES = {"Soybeans": "Soybean Visible Stox in Dlv Space", "Corn": "Visible Corn Stox in Dlv Space"}
