@@ -109,6 +109,35 @@ Scheduled jobs for this portal now (as of 2026-10-04):
 
 The droplet cron lines are wrapped in `/opt/alerting/cron-alert`, which emails when a job fails.
 
+## River FOB Daily email (`river_email.py`, 2026-11-09)
+
+Kolten: "an email to go out to a specific distribution list", built from five screenshots. JSA staff only. In order: the top of the Corn and
+Soybeans sheets (date through % Full Carry), the Cash vs. Delivery charts (Corn, Beans; 12 weekly points), and River Bids' Movement by segment for
+the upcoming delivery month, Illinois zones with their terminals ("show the Zone bids for each on the Illinois not anything else").
+
+- **Same numbers as the app.** `river_views.py` holds the Cash vs Delivery series and chart and the Movement table, and the app's tabs call it too. No
+  Streamlit in it, because the job runs without a session. The sheet top uses `fob_model`, the saved sheet, the seed cash distance and storage, and interest at
+  fed funds + 2.25% (the sidebar's defaults). A Movement table matches the tab with Segments narrowed to Illinois.
+- **Upcoming delivery month:** the first contract month on or after this calendar month (`delivery_key`; in November, Corn Dec and Soybeans Nov). If nobody
+  quotes it yet, the next quoted month stands in and the caption says so.
+- **When:** droplet cron every 10 minutes, 4:05-7:55 PM CT weekdays (`deploy/run_river_email.sh` under cron-alert; the bid import ends about 4:00). It sends once,
+  the first time today's sheet is saved with futures and today's Illinois bids are in. On the last run it sends without today's bids, or tells Kolten nothing went
+  out if there's no sheet. A re-save after the send doesn't resend. State is `logs/.river_email_state.json`.
+- **Recipients:** `RIVER_EMAIL_TO` in the droplet's `.env`; unset = the job does nothing. Sent through Graph from the same mailbox as the 5 PM alert, replies to Kolten.
+- **HTML:** inline styles and tables only, solid banner colours, charts as inline `cid:` PNGs from `vl_convert` (the watermark is composited with Pillow).
+  Dates go to Vega as timestamps: a bare `YYYY-MM-DD` is UTC and lands a day early on a Central-time box.
+- **Signature (Kolten 2026-11-09: "add my signature"):** `email_signature/` (signature.html + sig_N.png, `cid:` inline) is his Outlook signature. **It is gitignored because this repo is PUBLIC** and the Teams / WhatsApp links are his.
+  It's scp'd to `/opt/river-fob-portal/email_signature/`. It carries the firm's disclaimer, so a missing or incomplete folder stops the send (`load_signature` raises; repeated failures reach cron-alert).
+  If his signature changes, re-extract it from `%APPDATA%\Microsoft\Signatures` and copy it up again.
+- **WhatsApp (Kolten 2026-11-09: "send via whats app as well ... Via PNGs"; `river_whatsapp.py`):** six PNGs in the email's order, the caption on the first, then the disclaimer as a text message, through teams-broadcast's
+  bridge on the droplet (localhost:3001, `/send`). Set by `RIVER_WA_CHATS` (chat ids; unset = off), `RIVER_WA_SESSION` (whose linked account posts; default Kolten Postin) and `WA_API_KEY` (**a second copy of the bridge's key: update it when that key rotates**).
+  - Tables are drawn from the same cell rows as the email's HTML (`sheet_rows`, `movement_parts`), as SVG rasterised by `vl_convert`: the droplet has no browser and no system fonts (vl_convert carries its own).
+  - It has its own daily flag (`wa_day`), so an email failure or a WhatsApp failure doesn't resend the other. **Not connected = retried next run; anything that may have posted = finished for the day and reported at once**, so a chat never gets it twice.
+  - The account is a real person's number on an unofficial library (Baileys). It drops and reconnects often (Code 500); the retry covers that.
+- **Depends on the sheet being saved.** While the import runs on Kolten's laptop, a sleeping laptop means no email that day; the Graph importer fixes that.
+- `python river_email.py --preview out.html`, `--dry-run`, `--to someone@jpsi.com`. Tests: `python tests/test_river_email.py`. Not mirrored to the admin portal
+  (`exclude` in its `sync/apps.json`); `river_views.py` is, because `app.py` imports it.
+
 ## 🛳 Vessel Lineup tab — a mirror (2026-10-24)
 
 Kolten: "add a tab ... just mirroring the summary tab of the vessel line up dashboard". The tab (after 🚢 FOB Vessel, in all three

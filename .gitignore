@@ -62,3 +62,6 @@ Thumbs.db
 
 # Desktop Bid Sheet import log (fetch_bidsheet_email.py), incl. rotated .log.N files
 logs/
+
+# Kolten's email signature: this repo is public (see "River FOB Daily email" in CLAUDE.md)
+email_signature/
