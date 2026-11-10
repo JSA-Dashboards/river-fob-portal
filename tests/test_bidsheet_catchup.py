@@ -85,6 +85,7 @@ INBOX = [  # newest first, as Outlook sorts it
     Mail(T(2026, 10, 9, 13, 0), "Doug Schultz", "notes", [Att("notes.xlsx", b"no tab"), Att("memo.pdf")]),
     Mail(T(2026, 10, 8, 16, 9), "Doug Schultz", "FW: Thursday, 10-08-2026", [Att("100826.xlsx")]),
 ]
+REAL_INBOX_ITEMS = F._inbox_items          # kept for the Outlook-refusal check below
 F._inbox_items = lambda: iter(INBOX)
 bidsheet.parse_bidsheet = fake_parse
 
@@ -212,6 +213,85 @@ check("offline / disconnected never counts as settled; it settles 15 s after Out
       ok and secs == 105, (ok, secs))
 ok, secs = settle([((10, "a"), False)])
 check("never connects -> gives up at the 120 s limit", (not ok) and secs == 120, (ok, secs))
+
+print("\nfetch_bidsheet_email: Outlook refuses the import (11/10: stuck on Choose Profile 12:13-4:30 PM)")
+import tempfile                      # noqa: E402
+import pywintypes                    # noqa: E402
+import win32com.client               # noqa: E402
+
+real_dispatch, real_sleep = win32com.client.Dispatch, F.time.sleep
+tries = []
+win32com.client.Dispatch = lambda name: (tries.append(1), (_ for _ in ()).throw(
+    pywintypes.com_error(-2147418111, "Call was rejected by callee.", None, None)))[1]
+F.time.sleep = lambda s: None
+try:
+    REAL_INBOX_ITEMS()
+    raised = None
+except F.OutlookUnavailable as e:
+    raised = e
+finally:
+    win32com.client.Dispatch, F.time.sleep = real_dispatch, real_sleep
+check("three refusals -> OutlookUnavailable, carrying Outlook's message", raised is not None and len(tries) == 3
+      and "rejected by callee" in str(raised), (raised, len(tries)))
+
+TL = ('"Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name","CPU Time","Window Title"\n'
+      '"OUTLOOK.EXE","39180","Console","1","42,000 K","Running","AzureAD\\\\K","0:00:01","Choose Profile"\n'
+      '"OUTLOOK.EXE","40000","Console","1","9,000 K","Unknown","AzureAD\\\\K","0:00:00","N/A"\n')
+check("tasklist: the open window's title, not N/A or the header", F.outlook_windows(TL) == ["Choose Profile"], F.outlook_windows(TL))
+check("tasklist: no Outlook running -> []", F.outlook_windows("INFO: No tasks are running which match the specified criteria.\n") == [])
+
+NOW = dt.datetime(2026, 11, 10, 15, 9)
+s, h = F.compose_outlook_alert(NOW, "Call was rejected by callee.", ["Choose Profile"], "2026-11-09")
+check("Choose Profile -> says to pick Outlook and click OK", "Choose Profile" in h and "<b>Outlook</b>" in h and "OK" in h, h)
+check("subject names the day; the body the time and the newest sheet",
+      s == "[River FOB] Outlook isn't answering the Bid Sheet import (Tue Nov 10)" and "3:09 PM" in h and "2026-11-09" in h, s)
+_, h2 = F.compose_outlook_alert(NOW, "x", ["Some <dialog>"], "2026-11-09")
+check("another window is named (escaped)", "Some &lt;dialog&gt;" in h2 and "Choose Profile" not in h2, h2)
+_, h3 = F.compose_outlook_alert(NOW, "x", [], "2026-11-09")
+check("no window -> how to close classic Outlook", "Task Manager" in h3, h3)
+
+tmpdir = tempfile.mkdtemp()
+real_note, real_windows = F.OUTLOOK_ALERT, F.outlook_windows
+F.OUTLOOK_ALERT = os.path.join(tmpdir, "alert.txt")
+F.outlook_windows = lambda: ["Choose Profile"]
+F.db.list_dates = lambda: ["2026-11-09", "2026-11-06"]
+sent = []
+send = lambda subj, html: sent.append(subj)
+try:
+    a1 = F.alert_outlook("refused", now=NOW, send=send)
+    a2 = F.alert_outlook("refused", now=NOW + dt.timedelta(minutes=10), send=send)
+    a3 = F.alert_outlook("refused", now=NOW + dt.timedelta(days=1), send=send)
+    check("emails at the first refusal, not again the same day, again the next day",
+          (a1, a2, a3) == (True, False, True) and len(sent) == 2, (a1, a2, a3, sent))
+
+    def fail_send(subj, html):
+        raise RuntimeError("Graph down")
+    os.remove(F.OUTLOOK_ALERT)
+    try:
+        F.alert_outlook("refused", now=NOW, send=fail_send)
+    except RuntimeError:
+        pass
+    check("a failed send isn't counted, so the next run tries again", F.alert_due(NOW.date()))
+
+    calls = []
+    real_main, real_alert = F.main, F.alert_outlook
+
+    def refuse():
+        raise F.OutlookUnavailable("rejected")
+    F.main, F.alert_outlook = refuse, (lambda e: calls.append(str(e)))
+    for argv, want in ((["fetch_bidsheet_email.py"], ["rejected"]), (["fetch_bidsheet_email.py", "--dry-run"], [])):
+        calls.clear()
+        sys.argv = argv
+        try:
+            F.run_cli()
+            code = None
+        except SystemExit as e:
+            code = e.code
+        check(f"the task run ({' '.join(argv[1:]) or 'scheduled'}) exits 1 and {'emails' if want else 'sends nothing'}",
+              code == 1 and calls == want, (code, calls))
+    F.main, F.alert_outlook = real_main, real_alert
+finally:
+    F.OUTLOOK_ALERT, F.outlook_windows = real_note, real_windows
 
 print("\n" + ("ALL PASS" if not FAILS else "FAILURES: %s" % FAILS))
 sys.exit(1 if FAILS else 0)

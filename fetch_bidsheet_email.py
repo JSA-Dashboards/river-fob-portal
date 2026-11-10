@@ -42,6 +42,14 @@ Outlook says it's connected (`_sync_outlook`, at most SYNC_MAX_S), then looks
 once more. A run that finds the sheet at once never waits. The task's sign-in and
 unlock runs also start 3 minutes late, so the network is back before they look.
 
+OUTLOOK ALERT (2026-11-10). On Tue 11/10 a classic Outlook that COM had started at
+12:13 sat on a "Choose Profile" window, and every run from 3:00 to 4:20 PM was
+refused ("Call was rejected by callee") while Doug's 3:48 sheet waited; it was only
+caught when Kolten asked. Kolten: "email me when Outlook refuses it". So a run that
+can't reach Outlook after its retries emails kpostin@ (Graph, the Basis Tracker's
+app and sender on this laptop, read from ../basis-tracker-streamlit/.env), at most once
+a day, naming any Outlook window that's open (e.g. Choose Profile) and what to do.
+
 LOG. Every run appends to logs/bidsheet_import.log (rotated; gitignored), with the
 full traceback if it crashes. Task Scheduler keeps none of the output. Exit codes:
 0 = done / nothing to do, 1 = crash, 2 = a day couldn't get its futures (the save
@@ -88,6 +96,10 @@ SYNC_MAX_S, SYNC_SETTLE_S, SYNC_MIN_S, SYNC_STEP_S = 120, 15, 20, 3
 CONNECTED = 500               # OlExchangeConnectionMode: 500-700 cached + connected, 800 online; below = offline / disconnected
 MODE_NAMES = {0: "no Exchange", 100: "offline", 200: "cached offline", 300: "disconnected", 400: "cached disconnected",
               500: "connected (headers)", 600: "connected (drizzle)", 700: "connected", 800: "online"}
+# The "Outlook isn't answering" email: to whom, the once-a-day note, and where this laptop keeps the Graph settings.
+ALERT_TO = "kpostin@jpsi.com"
+OUTLOOK_ALERT = os.path.join(tempfile.gettempdir(), "river_fob_outlook_alert.txt")
+GRAPH_ENV = os.path.join(os.path.dirname(HERE), "basis-tracker-streamlit", ".env")
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -100,6 +112,10 @@ try:
     log.addHandler(_fh)
 except OSError:
     pass                      # no log file is never a reason to skip the import
+
+
+class OutlookUnavailable(Exception):
+    """Classic Outlook refused every try (busy, starting, or stuck on a window such as Choose Profile)."""
 
 
 def _inbox_items():
@@ -116,9 +132,103 @@ def _inbox_items():
             return items
         except pywintypes.com_error as e:
             if attempt == 2:
-                raise
+                raise OutlookUnavailable(str(e)) from e
             log.warning("Outlook didn't answer (%s); retrying in 20s.", e)
             time.sleep(20)
+
+
+def outlook_windows(tasklist_csv=None):
+    """The titles of classic Outlook's open windows ('Choose Profile', 'Inbox - ...'), from `tasklist /v`. [] when none or unknown."""
+    import csv
+    import io
+    if tasklist_csv is None:
+        import subprocess
+        try:
+            tasklist_csv = subprocess.run(["tasklist", "/v", "/fo", "csv", "/nh", "/fi", "imagename eq OUTLOOK.EXE"],
+                                          capture_output=True, text=True, timeout=30,
+                                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+    rows = [r for r in csv.reader(io.StringIO(tasklist_csv)) if len(r) >= 9 and r[0].lower() == "outlook.exe"]
+    return [r[-1] for r in rows if r[-1] and r[-1] != "N/A"]
+
+
+def alert_due(today, path=None):
+    try:
+        with open(path or OUTLOOK_ALERT) as f:
+            return f.read().strip() != today.isoformat()
+    except OSError:
+        return True
+
+
+def mark_alerted(today, path=None):
+    try:
+        with open(path or OUTLOOK_ALERT, "w") as f:
+            f.write(today.isoformat())
+    except OSError:
+        pass
+
+
+def compose_outlook_alert(now, err, titles, newest):
+    """-> (subject, html) for the 'Outlook isn't answering' email."""
+    from html import escape
+    when = now.strftime("%I:%M %p").lstrip("0")
+    if "Choose Profile" in titles:
+        what = ("Classic Outlook is waiting on a <b>Choose Profile</b> window (it may be behind other windows). Pick "
+                "<b>Outlook</b> and click <b>OK</b>. The next run picks up the sheet.")
+    elif titles:
+        what = ("Classic Outlook has these windows open: <b>" + escape(", ".join(titles)) + "</b>. A dialog in one of them is "
+                "likely blocking it. Answer it, or close classic Outlook in Task Manager; the next run starts it again.")
+    else:
+        what = ("Classic Outlook may be starting, busy, or stuck on a hidden window. If this keeps up, close classic Outlook in "
+                "Task Manager (Microsoft Outlook, End task); the next run starts it again.")
+    subject = f"[River FOB] Outlook isn't answering the Bid Sheet import ({now:%a %b} {now.day})"
+    html = ("<div style='font-family:system-ui,sans-serif;font-size:14px;line-height:1.5'>"
+            f"<p>The Bid Sheet import on your laptop couldn't reach classic Outlook at <b>{escape(when)}</b> (3 tries over "
+            "about 3 minutes), so it can't look for Doug's email.</p>"
+            f"<p>{what}</p>"
+            "<p>The import tries again every 10 minutes until 7 PM. Or paste the sheet in the app: <b>📝 Inputs</b> → "
+            "<b>Paste daily tables</b> → <b>Save to archive</b>.</p>"
+            f"<p>Newest saved sheet: <b>{escape(str(newest))}</b>.</p>"
+            f"<p style='color:#94a3b8;font-size:12px'>Outlook said: {escape(str(err))}<br>Sent at most once a day by "
+            "fetch_bidsheet_email.py on your laptop.</p></div>")
+    return subject, html
+
+
+def _graph_cfg():
+    """The Graph app + sender: this repo's .env if it has them, else the Basis Tracker's .env on this laptop."""
+    import check_bidsheet_fresh as CB
+    from pathlib import Path
+    cfg = CB._graph_cfg()
+    if not all(cfg.values()):
+        fill = CB.parse_env(Path(GRAPH_ENV))
+        for k in CB.GRAPH_KEYS:
+            cfg[k] = cfg[k] or (fill.get(k) or "").strip()
+    missing = [k for k in CB.GRAPH_KEYS if not cfg[k]]
+    if missing:
+        raise RuntimeError(f"Graph not configured, missing: {', '.join(missing)}")
+    return cfg
+
+
+def alert_outlook(err, now=None, send=None):
+    """Email Kolten that Outlook refused the import, once a day. -> True if an email went."""
+    now = now or dt.datetime.now()
+    if not alert_due(now.date()):
+        log.info("Already emailed about Outlook today; not again.")
+        return False
+    try:
+        newest = (db.list_dates() or ["none"])[0]
+    except Exception:  # noqa: BLE001 - the email matters more than this line in it
+        newest = "unknown"
+    subject, html = compose_outlook_alert(now, err, outlook_windows(), str(newest)[:10])
+    if send is None:
+        import check_bidsheet_fresh as CB
+        cfg = _graph_cfg()
+        send = lambda s, h: CB._send(cfg, [ALERT_TO], s, h)
+    send(subject, html)
+    mark_alerted(now.date())
+    log.info("Emailed %s that Outlook isn't answering.", ALERT_TO)
+    return True
 
 
 def wait_until_settled(probe, clock=time.monotonic, sleep=time.sleep, settle=SYNC_SETTLE_S, least=SYNC_MIN_S,
@@ -337,11 +447,23 @@ def main():
     return rc
 
 
-if __name__ == "__main__":
+def run_cli():
     try:
         sys.exit(main())
     except SystemExit:
         raise
+    except OutlookUnavailable as e:
+        log.exception("Bid Sheet import crashed: Outlook isn't answering")
+        if "--dry-run" not in sys.argv:
+            try:
+                alert_outlook(e)
+            except Exception:  # noqa: BLE001
+                log.exception("Couldn't send the Outlook email")
+        sys.exit(1)
     except BaseException:
         log.exception("Bid Sheet import crashed")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run_cli()

@@ -382,6 +382,16 @@ loaded by hand. The 5 PM alert did fire. So now:
   - 10/12's futures were filled by the repair. That day's bid scrape is lost.
   - `grain_calendar` agrees with `HOLIDAYS` through 2027, plus Juneteenth 2027
     (Fri 06-18), which `HOLIDAYS` leaves out as doubtful.
+- **Outlook stuck on a window, and the email about it (2026-11-10).** A classic Outlook that COM had started at 12:13
+  sat on **Choose Profile** (one profile, set as the default; why it asked is unknown). Every run from 3:00 to 4:20 PM got
+  "Call was rejected by callee" while Doug's 3:48 sheet waited, until the prompt cleared about 4:30.
+  - Kolten: "email me when Outlook refuses it". A run that still can't reach Outlook after its 3 tries now emails
+    kpostin@ at most once a day (`alert_outlook`; the note is `river_fob_outlook_alert.txt` in %TEMP%).
+  - The email names classic Outlook's open window (from `tasklist /v`; "Choose Profile" gets "pick Outlook, OK") and the
+    newest saved sheet.
+  - It goes through Graph as the 5 PM alert does, with the Graph settings from `../basis-tracker-streamlit/.env` on the
+    laptop, so no new copy of the secret.
+  - A `--dry-run` never emails. A failed send isn't counted, so the next run tries again.
 - **Tests:** `python tests/test_bidsheet_catchup.py` (pure: fake inbox and archive).
 - **Manual check from Snowflake when a run fails:** join ACCOUNT_USAGE
   LOGIN_HISTORY → SESSIONS (`client_environment ILIKE '%Windows%'`) →
