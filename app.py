@@ -1941,12 +1941,12 @@ def _render_cashdel_chart():
 
 # ── 📦 Deliverable Stocks (Kolten 2026-10-21/24) ───────────────────────────────────────────────────────────────────────────
 # CBOT corn and soybean stocks in deliverable positions, weekly, as the AgMarket "Visible Stox in Dlv Space" charts show them:
-# one line per year on a Jan-Dec axis, the current year thick red, a five-year average dotted (2020-2024 in 2026). Typed in on this tab
+# one line per year on a Jan-Dec axis, the current year thick black, a five-year average dotted (2020-2024 in 2026). Typed in on this tab
 # (editors only) from CME's Tuesday "Stocks of Grain" report — CME's terms bar pulling it automatically (deliverable_stocks.py);
 # 2020 to mid-June 2026 came from the old FOB Sheet workbook (import_deliverable_stocks.py).
 DS_TITLES = {"Soybeans": "Soybean Visible Stox in Dlv Space", "Corn": "Visible Corn Stox in Dlv Space"}
 DS_PAST_COLORS = ["#1f5fa8", "#ed7d31", "#2e7d32", "#5ab4e5", "#7b3fa0", "#e08cc6", "#8c6d31"]    # oldest -> newest
-DS_CURRENT = "#e00000"
+DS_CURRENT = "#000000"           # Kolten 2026-11-10: "make the current year line bold and black" (was red)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1972,7 +1972,7 @@ def _ds_chart(commodity, series, current):
     past = [str(y) for y in years if y != current]
     domain = ([avg_label] if avg_label else []) + past + ([str(current)] if current in years else [])
     colours = (["#111111"] if avg_label else []) + DS_PAST_COLORS[-len(past):] + ([DS_CURRENT] if current in years else [])
-    widths = [2.2 if s == avg_label else 4.0 if s == str(current) else 2.0 for s in domain]
+    widths = [2.2 if s == avg_label else 5.0 if s == str(current) else 2.0 for s in domain]
     dashes = [[3, 3] if s == avg_label else [1, 0] for s in domain]
     chart = alt.Chart(df).mark_line(interpolate="monotone").encode(
         x=alt.X("x:T", title=None, scale=alt.Scale(domain=[f"{DS.REF_YEAR}-01-01", f"{DS.REF_YEAR}-12-31"]),
