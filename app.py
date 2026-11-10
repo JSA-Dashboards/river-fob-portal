@@ -1972,7 +1972,6 @@ def _ds_chart(commodity, series, current):
     past = [str(y) for y in years if y != current]
     domain = ([avg_label] if avg_label else []) + past + ([str(current)] if current in years else [])
     colours = (["#111111"] if avg_label else []) + DS_PAST_COLORS[-len(past):] + ([DS_CURRENT] if current in years else [])
-    widths = [2.2 if s == avg_label else 5.0 if s == str(current) else 2.0 for s in domain]
     dashes = [[3, 3] if s == avg_label else [1, 0] for s in domain]
     chart = alt.Chart(df).mark_line(interpolate="monotone").encode(
         x=alt.X("x:T", title=None, scale=alt.Scale(domain=[f"{DS.REF_YEAR}-01-01", f"{DS.REF_YEAR}-12-31"]),
@@ -1982,8 +1981,9 @@ def _ds_chart(commodity, series, current):
         color=alt.Color("Series:N", sort=domain, scale=alt.Scale(domain=domain, range=colours),
                         legend=alt.Legend(orient="top", title=None, labelFontWeight="bold", symbolType="stroke",
                                           symbolStrokeWidth=3, symbolSize=260)),
-        # strokeWidth, not size: size also scales the legend's symbols, down to dots
-        strokeWidth=alt.StrokeWidth("Series:N", scale=alt.Scale(domain=domain, range=widths), legend=None),
+        # strokeWidth, not size: size also scales the legend's symbols, down to dots. A condition, not a scale: Streamlit's
+        # Vega-Lite reads a list of widths on a nominal field as a 2-point range and draws every line about 2 px (seen live 11-10).
+        strokeWidth=alt.condition(f"datum.Series == '{current}'", alt.value(5.0), alt.value(2.0)),
         strokeDash=alt.StrokeDash("Series:N", scale=alt.Scale(domain=domain, range=dashes), legend=None),
         order=alt.Order("Series:N"),
         tooltip=[alt.Tooltip("Series:N", title="Year"), alt.Tooltip("Week:N"),
