@@ -78,6 +78,27 @@ check("terminal table has Port and the changes", bool(terms) and {"Port", "Total
 caps = " ".join(c.value for c in at.caption)
 check("as-of caption is the US only", "United States" in caps and "Brazil" not in caps.split("Line-up as of:")[-1][:80], caps[:300])
 
+print("titles")
+TITLE_SCRIPT = (
+    f"import sys\nsys.path.insert(0, {REPO!r})\nimport streamlit as st\nimport vessel_focus\n"
+    "from vessel_mirror import copy_tools\n"
+    "seen = []\n_t, _c = copy_tools.table, copy_tools.chart\n"
+    "def table(df, key, **kw):\n    seen.append(kw.get('title') or copy_tools._table_title(key))\n    return _t(df, key, **kw)\n"
+    "def chart(fig, key):\n    seen.append(copy_tools._fig_title(fig))\n    return _c(fig, key)\n"
+    "copy_tools.table, copy_tools.chart = table, chart\n"
+    "vessel_focus.render()\nst.session_state['_titles'] = seen\n")
+tat = AppTest.from_string(TITLE_SCRIPT, default_timeout=240)
+tat.run()
+titles = tat.session_state["_titles"]
+check("title script: no exception", not tat.exception, [e.value for e in tat.exception])
+check("no table is titled from its widget key ('Rfv ...')", not any(t.lower().startswith("rfv") for t in titles), titles)
+check("snapshot titles name line-up / shipped, the unit and both areas",
+      "Line-up vessels by commodity: US Gulf and PNW" in titles and
+      "Shipped vessels by commodity, month-to-date: US Gulf and PNW" in titles, titles[:4])
+check("each area's tables name the area", all(f"{kind}: {name}" in titles for name in ("US Gulf", "PNW") for kind in
+      ("Line-up vessels by commodity", "Line-up vessels by terminal and commodity", "Shipped vessels by commodity")), titles)
+check("the explorer's titles carry the filter (US Gulf)", any(t.startswith("Line-up over time (vessels): ") and "US Gulf" in t for t in titles), titles)
+
 print("explorer")
 check("explorer starts on USG only", at.session_state[f"{vf.K}_ex_area"] == ["USG"], at.session_state[f"{vf.K}_ex_area"])
 at2 = run(**{f"{vf.K}_ex_area": ["PNW", "USG"], f"{vf.K}_ex_view": "Sailed"})

@@ -78,10 +78,12 @@ def _snapshot(detail, events, measure):
         out.insert(0, "Commodity", out.index)
         with col:
             st.markdown(f"**{title}**")
-            copy_tools.table(out, f"{K}_snap_{key}", styler=ov._styled(out, [], "Commodity"), height=38 * (len(out) + 1))
+            what = f"Line-up {ov._vol(measure)} by commodity" if key == "now" else f"Shipped {ov._vol(measure)} by commodity, month-to-date"
+            copy_tools.table(out, f"{K}_snap_{key}", styler=ov._styled(out, [], "Commodity"), height=38 * (len(out) + 1),
+                             title=f"{what}: US Gulf and PNW")
 
 
-def _terminal_table(d, key):
+def _terminal_table(d, key, title=None):
     """Terminal rows x commodity columns (line-up now), with the total and the week / month / year change: the full page's port
     table, one level down. A terminal with nothing now and nothing a week, month or year ago is left out."""
     keep = d.groupby("elevator")[["now", *ch.PREV]].sum(min_count=1).fillna(0).sum(axis=1) > 0
@@ -92,7 +94,7 @@ def _terminal_table(d, key):
     t = ov.port_table(d.assign(port=d["elevator"])).drop(columns="Area").rename(columns={"Port": "Terminal"})
     where = d.groupby("elevator")["port"].agg(lambda s: s.value_counts().index[0])
     t.insert(1, "Port", t["Terminal"].map(where).fillna(""))
-    copy_tools.table(t, key, styler=ov._styled(t, ["Δ Week", "Δ Month", "Δ Year"]), height=min(38 * (len(t) + 1), 640))
+    copy_tools.table(t, key, styler=ov._styled(t, ["Δ Week", "Δ Month", "Δ Year"]), height=min(38 * (len(t) + 1), 640), title=title)
 
 
 def _area_section(area, detail, events, measure, expanded):
@@ -102,14 +104,15 @@ def _area_section(area, detail, events, measure, expanded):
             st.info(f"Nothing banked for {area} yet.")
             return
         st.markdown("**Line-up by commodity**")
-        ov.show_change_table(d, "commodity", "Commodity", f"{K}_ct_{area}")
+        name = ov._scope_name(area)
+        ov.show_change_table(d, "commodity", "Commodity", f"{K}_ct_{area}", title=f"Line-up {ov._vol(measure)} by commodity: {name}")
         st.markdown("**Line-up by terminal**")
-        _terminal_table(d, f"{K}_term_{area}")
+        _terminal_table(d, f"{K}_term_{area}", title=f"Line-up {ov._vol(measure)} by terminal and commodity: {name}")
         if not ev.empty:
             st.markdown("**Sailed**")
             t = ov._sailed_table(ch.sailed_windows(ev, ["commodity"], measure), "Commodity", "commodity")
             copy_tools.table(t, f"{K}_sailed_{area}", styler=ov._styled(t, [c for c in t.columns if c.startswith(("Δ", "%"))], "Commodity"),
-                             height=min(38 * (len(t) + 1), 400))
+                             height=min(38 * (len(t) + 1), 400), title=f"Shipped {ov._vol(measure)} by commodity: {name}")
 
 
 def _explorer(lineup, events, detail, meta, gaps, left_out, measure):
