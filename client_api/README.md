@@ -3,8 +3,8 @@
 CIF NOLA, barge freight and FOB barge values from John Stewart & Associates' daily River FOB sheet, for corn,
 soybeans and wheat, over the **last 12 months** of published sheets.
 
-- **Base URL:** `https://162.243.174.38` (all paths below start with `/v1/`). It will move to a JSA web address later;
-  we'll tell you before it does.
+- **Base URL:** `https://api.jpsi.com` (all paths below start with `/v1/`). If you set something up earlier against the
+  server's numeric address (`162.243.174.38`), that keeps working for now, but please switch to the name.
 - **Your key:** send it in the `X-API-Key` header on every call. Keep it private: it identifies your organisation,
   and every call made with it is logged. Never put it in a URL. If it may have leaked, tell us and we'll replace it.
 - **Keys are good for 6 months.** We'll renew yours before then (normally the same key, extended). An expired key gets
@@ -53,13 +53,13 @@ JSON responses look like this: `{"dataset": "fob", "units": "...", "start": "...
 ## Examples
 
 ```bash
-curl -H "X-API-Key: YOUR_KEY" "https://162.243.174.38/v1/fob?commodity=corn&location=Hennepin"
-curl -H "X-API-Key: YOUR_KEY" "https://162.243.174.38/v1/cif?start=2025-11-01&format=csv" -o cif.csv
+curl -H "X-API-Key: YOUR_KEY" "https://api.jpsi.com/v1/fob?commodity=corn&location=Hennepin"
+curl -H "X-API-Key: YOUR_KEY" "https://api.jpsi.com/v1/cif?start=2025-11-01&format=csv" -o cif.csv
 ```
 
 ```python
 import requests
-r = requests.get("https://162.243.174.38/v1/freight", params={"region": "IL", "start": "2026-10-01"},
+r = requests.get("https://api.jpsi.com/v1/freight", params={"region": "IL", "start": "2026-10-01"},
                  headers={"X-API-Key": "YOUR_KEY"}, timeout=60)
 r.raise_for_status()
 rows = r.json()["rows"]
@@ -69,7 +69,7 @@ rows = r.json()["rows"]
 
 ```
 let
-    Source = Csv.Document(Web.Contents("https://162.243.174.38/v1/fob",
+    Source = Csv.Document(Web.Contents("https://api.jpsi.com/v1/fob",
         [Query = [commodity = "corn", start = "2025-11-01", format = "csv"],
          Headers = [#"X-API-Key" = "YOUR_KEY"]])),
     Table = Table.PromoteHeaders(Source)

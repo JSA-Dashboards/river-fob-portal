@@ -1,5 +1,5 @@
 #!/bin/bash
-# Uptime check for the River FOB client API (https://162.243.174.38), reported to healthchecks.io.
+# Uptime check for the River FOB client API (https://api.jpsi.com), reported to healthchecks.io.
 #
 # Kolten 2026-11-05: "set up the uptime check on healthchecks". Healthchecks only waits for pings, so this script is the probe.
 # It runs on the OTHER droplet (137.184.195.51, crontab every 5 minutes), so a dead API droplet is caught too, and pings the
@@ -9,13 +9,14 @@
 # network blip doesn't page):
 #   1. GET /v1/health over HTTPS answers 200 with a certificate curl trusts (catches: droplet down, firewall, Caddy, uvicorn);
 #   2. its body says "data":"ok" (the API holds the 12 months: catches a start-up load that failed against Snowflake);
-#   3. the certificate has more than 24 h left. Let's Encrypt IP certificates last 6 days and Caddy renews them with ~2 days
-#      to go, so under 24 h means renewal is failing, days before clients would see a broken certificate.
+#   3. the certificate has more than 24 h left. The api.jpsi.com certificate (Let's Encrypt, 90 days) is renewed by Caddy about
+#      30 days before it ends (it was a 6-day IP certificate until 2026-11-12, renewed with ~2 days to go), so under 24 h
+#      means renewal is failing, long before clients would see a broken certificate.
 # Up -> ping the check; down -> ping /fail with the reason (healthchecks emails at once). No ping at all (this droplet or its
 # cron down) -> healthchecks emails after the check's period + grace. Each run writes one line to syslog
 # (journalctl -t river-fob-api-uptime). Plain crontab line, not cron-alert: healthchecks is the alerting here.
 set -u
-URL="${API_URL:-https://162.243.174.38}"
+URL="${API_URL:-https://api.jpsi.com}"
 HOSTPORT="${URL#https://}:443"
 CONF=/opt/alerting/alert.conf
 SLUG="${HC_SLUG:-river-fob-api-uptime}"

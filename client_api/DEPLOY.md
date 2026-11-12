@@ -5,7 +5,13 @@ nothing else: no repo credentials, no other app's secrets, and no client keys (t
 managed in River FOB's 🔑 API tab). Kolten chose this, "the server's own address for now" and a rolling 12 months on
 2026-11-05. The pilot client group is **Hertshten**.
 
-## LIVE since 2026-11-05: https://162.243.174.38
+## LIVE since 2026-11-05: https://api.jpsi.com (the name since 2026-11-12; https://162.243.174.38 still answers)
+
+**2026-11-12: IT added the DNS record `api.jpsi.com` A 162.243.174.38** (DNS only, no proxy). The same day `/etc/caddy/Caddyfile` got a second site block,
+`api.jpsi.com { reverse_proxy 127.0.0.1:8000 ... }` with the same two header lines and NO `tls` block (an ordinary Let's Encrypt certificate; Caddy got it over
+http-01 in about 5 seconds, issuer YE2, 90 days, renews itself), above the unchanged IP block. Backup: `/etc/caddy/Caddyfile.bak.20261112`. Checked from outside: `GET /v1/health` -> 200 with a trusted
+certificate, `/v1/cif` with no key -> 401, and the IP address still 200. Still to do by hand: `RIVER_FOB_API_URL` in River FOB's Streamlit secrets (then Reboot), and, when no one
+uses the IP any more, drop its block from the Caddyfile (`systemctl reload caddy`) so it stops renewing its 6-day certificate.
 
 - **Droplet:** `river-fob-api`, NYC1, Ubuntu 24.04.5, 1 GB. Only Kolten's `basis-tracker-droplet` SSH key is on it.
   `ssh root@162.243.174.38`; batch the work into one session, because ufw rate-limits quick reconnects.
