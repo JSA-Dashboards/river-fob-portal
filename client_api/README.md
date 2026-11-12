@@ -3,8 +3,8 @@
 CIF NOLA, barge freight and FOB barge values from John Stewart & Associates' daily River FOB sheet, for corn,
 soybeans and wheat, over the **last 12 months** of published sheets.
 
-- **Base URL:** `https://api.jpsi.com` (all paths below start with `/v1/`). If you set something up earlier against the
-  server's numeric address (`162.243.174.38`), that keeps working for now, but please switch to the name.
+- **Base URL:** `https://api.jpsi.com` (all paths below start with `/v1/`). The server's old numeric address
+  (`162.243.174.38`) no longer answers: if you set something up against it, switch to the name.
 - **Your key:** send it in the `X-API-Key` header on every call. Keep it private: it identifies your organisation,
   and every call made with it is logged. Never put it in a URL. If it may have leaked, tell us and we'll replace it.
 - **Keys are good for 6 months.** We'll renew yours before then (normally the same key, extended). An expired key gets

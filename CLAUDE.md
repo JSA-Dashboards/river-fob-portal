@@ -176,7 +176,7 @@ carries (`corn-exporter-dashboard`):
   - Widget keys start with `rfv_` (the admin portal shares one session state across both pages). The page uses `px.bar/line/area/scatter`,
   checked under this repo's `plotly<6` pin (5.24.1) as well as 6.x.
 
-## Client API (`client_api/`, pilot 2026-11-05; LIVE at https://api.jpsi.com since 2026-11-12 (the IP address 162.243.174.38 still answers), see client_api/DEPLOY.md)
+## Client API (`client_api/`, pilot 2026-11-05; LIVE at https://api.jpsi.com since 2026-11-12 (the numeric address was switched off that day), see client_api/DEPLOY.md)
 
 Kolten: "River FOB values for a pilot ... one group (client) for now with the key ... CIF, Barge Freight, and FOB values for
 corn, soybeans & Wheat for the past year". A small read-only HTTPS API for clients. It is NOT part of the Streamlit app:
